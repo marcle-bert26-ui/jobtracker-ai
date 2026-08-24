@@ -1,235 +1,838 @@
-const applications = [
-  {
-    company: "Cleeven",
-    position: "Consultant",
-    location: "Bâle, Suisse",
-    status: "Entretien",
-    date: "18 août 2026",
-    color: "bg-blue-100 text-blue-700",
-  },
-  {
-    company: "Daimler Buses",
-    position: "E-System Expert",
-    location: "Sarcelles, France",
-    status: "En cours",
-    date: "20 août 2026",
-    color: "bg-amber-100 text-amber-700",
-  },
-  {
-    company: "Louis Vuitton",
-    position: "Ingénieur Industrialisation",
-    location: "Beaulieu-sur-Layon",
-    status: "Terminée",
-    date: "15 juillet 2026",
-    color: "bg-green-100 text-green-700",
-  },
-];
+"use client";
 
-const stats = [
-  {
-    label: "Candidatures",
-    value: "12",
-    detail: "au total",
-    icon: "💼",
-  },
-  {
-    label: "En cours",
-    value: "7",
-    detail: "candidatures",
-    icon: "🔄",
-  },
-  {
-    label: "Entretiens",
-    value: "3",
-    detail: "à venir",
-    icon: "📅",
-  },
-  {
-    label: "Actions",
-    value: "2",
-    detail: "à faire",
-    icon: "⚡",
-  },
-];
+import Link from "next/link";
+import { FormEvent, useEffect, useState } from "react";
+
+type Application = {
+  id: number;
+  company: string;
+  position: string;
+  location: string | null;
+  source: string | null;
+  job_url: string | null;
+  application_date: string | null;
+  status: string;
+  recruiter: string | null;
+  recruiter_email: string | null;
+  salary: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+type ApplicationForm = {
+  company: string;
+  position: string;
+  location: string;
+  source: string;
+  job_url: string;
+  application_date: string;
+  status: string;
+  recruiter: string;
+  recruiter_email: string;
+  salary: string;
+  notes: string;
+};
+
+type SyncAccountResult = {
+  account: string;
+  configured: boolean;
+  scanned: number;
+  new_applications: number;
+  updated_applications: number;
+  ignored: number;
+  error: string | null;
+};
+
+const API_URL = "http://127.0.0.1:8000";
+
+const ACCOUNT_LABELS: Record<string, string> = {
+  outlook: "Outlook (perso)",
+  yahoo: "Yahoo",
+  gmail: "Gmail",
+  outlook_school: "Outlook (scolaire)",
+};
+
+const initialForm: ApplicationForm = {
+  company: "",
+  position: "",
+  location: "",
+  source: "",
+  job_url: "",
+  application_date: new Date().toISOString().split("T")[0],
+  status: "Candidature envoyée",
+  recruiter: "",
+  recruiter_email: "",
+  salary: "",
+  notes: "",
+};
+
+function formatDate(date: string | null) {
+  if (!date) {
+    return "";
+  }
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return date;
+  }
+
+  return parsedDate.toLocaleDateString("fr-FR", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function getStatusStyle(status: string) {
+  const normalizedStatus = status.toLowerCase();
+
+  if (
+    normalizedStatus.includes("entretien") ||
+    normalizedStatus.includes("interview")
+  ) {
+    return "bg-blue-100 text-blue-800";
+  }
+
+  if (
+    normalizedStatus.includes("envoy") ||
+    normalizedStatus.includes("candidature")
+  ) {
+    return "bg-slate-100 text-slate-700";
+  }
+
+  if (
+    normalizedStatus.includes("accept") ||
+    normalizedStatus.includes("offre")
+  ) {
+    return "bg-green-100 text-green-800";
+  }
+
+  if (
+    normalizedStatus.includes("refus") ||
+    normalizedStatus.includes("rejet")
+  ) {
+    return "bg-red-100 text-red-800";
+  }
+
+  if (
+    normalizedStatus.includes("attente") ||
+    normalizedStatus.includes("en cours")
+  ) {
+    return "bg-orange-100 text-orange-800";
+  }
+
+  return "bg-slate-100 text-slate-700";
+}
 
 export default function Home() {
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [form, setForm] = useState<ApplicationForm>(initialForm);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
+  const [syncing, setSyncing] = useState(false);
+  const [syncResults, setSyncResults] = useState<SyncAccountResult[] | null>(
+    null
+  );
+  const [syncError, setSyncError] = useState("");
+
+  async function handleSyncEmails() {
+    await runSync(`${API_URL}/emails/sync`);
+  }
+
+  async function handleDeepResync() {
+    const confirmed = window.confirm(
+      "Ça va réanalyser tous les emails des 60 derniers jours avec l'IA, " +
+        "même ceux déjà traités. Ça peut prendre plusieurs minutes. Continuer ?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    await runSync(`${API_URL}/emails/sync?days=60&reset=true`);
+  }
+
+  async function runSync(url: string) {
+    try {
+      setSyncing(true);
+      setSyncError("");
+      setSyncResults(null);
+
+      const response = await fetch(url, {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        throw new Error("La synchronisation a échoué.");
+      }
+
+      const data: { results: SyncAccountResult[] } =
+        await response.json();
+
+      setSyncResults(data.results);
+
+      await loadApplications();
+    } catch (err) {
+      setSyncError(
+        err instanceof Error
+          ? err.message
+          : "Une erreur est survenue pendant la synchronisation."
+      );
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function loadApplications() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const response = await fetch(`${API_URL}/applications/`);
+
+      if (!response.ok) {
+        throw new Error("Impossible de récupérer les candidatures.");
+      }
+
+      const data: Application[] = await response.json();
+
+      setApplications(data);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Une erreur est survenue."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadApplications();
+  }, []);
+
+  function updateForm(
+    field: keyof ApplicationForm,
+    value: string
+  ) {
+    setForm((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }));
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!form.company.trim() || !form.position.trim()) {
+      setError("L'entreprise et le poste sont obligatoires.");
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      setError("");
+      setSuccessMessage("");
+
+      const payload = {
+        company: form.company.trim(),
+        position: form.position.trim(),
+        location: form.location.trim() || null,
+        source: form.source.trim() || null,
+        job_url: form.job_url.trim() || null,
+        application_date: form.application_date || null,
+        status: form.status,
+        recruiter: form.recruiter.trim() || null,
+        recruiter_email: form.recruiter_email.trim() || null,
+        salary: form.salary.trim() || null,
+        notes: form.notes.trim() || null,
+      };
+
+      const response = await fetch(`${API_URL}/applications/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const responseData = await response.json();
+
+        throw new Error(
+          responseData.detail ||
+            "Impossible d'ajouter la candidature."
+        );
+      }
+
+      const newApplication: Application = await response.json();
+
+      setApplications((currentApplications) => [
+        newApplication,
+        ...currentApplications,
+      ]);
+
+      setForm({
+        ...initialForm,
+        application_date: new Date()
+          .toISOString()
+          .split("T")[0],
+      });
+
+      setSuccessMessage(
+        "Candidature ajoutée avec succès !"
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Une erreur est survenue lors de l'ajout."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
-      {/* Header */}
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
+    <main className="min-h-screen bg-slate-100 p-4 md:p-6">
+      <div className="mx-auto max-w-[1600px]">
+        {/* EN-TÊTE */}
+        <header className="mb-6 flex flex-col gap-4 rounded-2xl border border-slate-300 bg-white px-6 py-5 shadow-sm md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">
-              JobTracker <span className="text-blue-600">AI</span>
+            <h1 className="text-3xl font-bold text-slate-800">
+              JobTracker AI
             </h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Ton assistant personnel de recherche d'emploi
+
+            <p className="mt-1 text-slate-500">
+              Suivi intelligent de mes candidatures
             </p>
           </div>
 
-          <button className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
-            + Nouvelle candidature
-          </button>
-        </div>
-      </header>
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
+              {applications.length} candidature
+              {applications.length > 1 ? "s" : ""}
+            </div>
 
-      <div className="mx-auto max-w-7xl px-6 py-8">
-        {/* Welcome */}
-        <section className="mb-8">
-          <h2 className="text-3xl font-bold">Bonjour Marc 👋</h2>
-          <p className="mt-2 text-slate-500">
-            Voici où en est ta recherche d'emploi aujourd'hui.
-          </p>
-        </section>
-
-        {/* Stats */}
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {stats.map((stat) => (
-            <div
-              key={stat.label}
-              className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+            <button
+              type="button"
+              onClick={loadApplications}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
             >
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-slate-500">
-                  {stat.label}
-                </span>
-                <span className="text-xl">{stat.icon}</span>
-              </div>
+              ↻ Actualiser
+            </button>
 
-              <div className="mt-4 flex items-end gap-2">
-                <span className="text-3xl font-bold">{stat.value}</span>
-                <span className="mb-1 text-sm text-slate-500">
-                  {stat.detail}
-                </span>
-              </div>
-            </div>
-          ))}
-        </section>
+            <button
+              type="button"
+              onClick={handleSyncEmails}
+              disabled={syncing}
+              className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:bg-slate-400"
+            >
+              {syncing ? "Synchronisation..." : "📧 Synchroniser les emails"}
+            </button>
 
-        {/* Main content */}
-        <section className="mt-8 grid gap-6 lg:grid-cols-3">
-          {/* Applications */}
-          <div className="lg:col-span-2 rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
-              <div>
-                <h3 className="font-semibold">Dernières candidatures</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  Les dernières opportunités suivies
-                </p>
-              </div>
+            <button
+              type="button"
+              onClick={handleDeepResync}
+              disabled={syncing}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400"
+              title="Réanalyse tout, y compris les emails déjà traités, sur les 60 derniers jours"
+            >
+              🔁 Réanalyser (60j)
+            </button>
 
-              <button className="text-sm font-medium text-blue-600 hover:text-blue-700">
-                Voir tout →
-              </button>
-            </div>
+            <Link
+              href="/emails"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+            >
+              📋 Journal des emails
+            </Link>
+          </div>
+        </header>
 
-            <div className="divide-y divide-slate-100">
-              {applications.map((application) => (
+        {/* RÉSULTATS DE SYNCHRONISATION */}
+        {syncError && (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">
+            <p className="font-semibold">Erreur de synchronisation</p>
+            <p className="mt-1 text-sm">{syncError}</p>
+          </div>
+        )}
+
+        {syncResults && (
+          <div className="mb-6 rounded-xl border border-slate-300 bg-white p-5 shadow-sm">
+            <p className="font-semibold text-slate-800">
+              📧 Résultat de la synchronisation
+            </p>
+
+            <p className="mt-1 text-xs text-slate-400">
+              La détection utilise l'IA locale (Ollama) si elle est lancée sur
+              ton PC, sinon des règles-clés en secours.
+            </p>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {syncResults.map((result) => (
                 <div
-                  key={`${application.company}-${application.position}`}
-                  className="flex flex-col gap-4 px-6 py-5 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between"
+                  key={result.account}
+                  className="rounded-lg border border-slate-200 p-3 text-sm"
                 >
-                  <div>
-                    <h4 className="font-semibold">{application.position}</h4>
-                    <p className="mt-1 text-sm font-medium text-slate-700">
-                      {application.company}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      📍 {application.location}
-                    </p>
-                  </div>
+                  <p className="font-semibold text-slate-800">
+                    {ACCOUNT_LABELS[result.account] || result.account}
+                  </p>
 
-                  <div className="flex items-center gap-4">
-                    <div className="text-right">
-                      <span
-                        className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${application.color}`}
-                      >
-                        {application.status}
-                      </span>
-                      <p className="mt-2 text-xs text-slate-400">
-                        {application.date}
-                      </p>
-                    </div>
+                  {!result.configured && (
+                    <p className="mt-1 text-slate-500">
+                      Compte non configuré (voir fichier .env)
+                    </p>
+                  )}
 
-                    <button className="rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-100">
-                      →
-                    </button>
-                  </div>
+                  {result.configured && result.error && (
+                    <p className="mt-1 text-red-600">{result.error}</p>
+                  )}
+
+                  {result.configured && !result.error && (
+                    <ul className="mt-1 space-y-0.5 text-slate-600">
+                      <li>{result.scanned} email(s) analysé(s)</li>
+                      <li>
+                        {result.new_applications} nouvelle(s) candidature(s)
+                      </li>
+                      <li>
+                        {result.updated_applications} candidature(s) mise(s)
+                        à jour
+                      </li>
+                      <li>{result.ignored} email(s) ignoré(s)</li>
+                    </ul>
+                  )}
                 </div>
               ))}
             </div>
           </div>
+        )}
 
-          {/* Actions */}
-          <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        {/* MESSAGES */}
+        {error && (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">
+            <p className="font-semibold">Erreur</p>
+            <p className="mt-1 text-sm">{error}</p>
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="mb-6 rounded-xl border border-green-200 bg-green-50 p-5 text-green-700">
+            <p className="font-semibold">
+              ✓ {successMessage}
+            </p>
+          </div>
+        )}
+
+        <div className="grid gap-6 xl:grid-cols-[1fr_2fr]">
+          {/* FORMULAIRE D'AJOUT */}
+          <section className="h-fit rounded-2xl border border-slate-300 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-6 py-5">
-              <h3 className="font-semibold">À faire</h3>
+              <h2 className="text-xl font-bold text-slate-800">
+                ➕ Ajouter une candidature
+              </h2>
+
               <p className="mt-1 text-sm text-slate-500">
-                Tes prochaines actions
+                Ajoute manuellement un poste à ton suivi.
               </p>
             </div>
 
-            <div className="space-y-4 p-6">
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-                <div className="flex gap-3">
-                  <span>⏰</span>
-                  <div>
-                    <p className="text-sm font-semibold text-amber-900">
-                      Relancer un recruteur
-                    </p>
-                    <p className="mt-1 text-xs text-amber-700">
-                      Candidature sans réponse depuis 10 jours
-                    </p>
-                  </div>
-                </div>
+            <form
+              onSubmit={handleSubmit}
+              className="space-y-5 p-6"
+            >
+              <div>
+                <label
+                  htmlFor="company"
+                  className="mb-2 block text-sm font-semibold text-slate-700"
+                >
+                  Entreprise *
+                </label>
+
+                <input
+                  id="company"
+                  type="text"
+                  value={form.company}
+                  onChange={(event) =>
+                    updateForm(
+                      "company",
+                      event.target.value
+                    )
+                  }
+                  placeholder="Ex : Cleeven"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  required
+                />
               </div>
 
-              <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
-                <div className="flex gap-3">
-                  <span>🎯</span>
-                  <div>
-                    <p className="text-sm font-semibold text-blue-900">
-                      Préparer un entretien
-                    </p>
-                    <p className="mt-1 text-xs text-blue-700">
-                      Entretien Cleeven — Consultant
-                    </p>
-                  </div>
-                </div>
+              <div>
+                <label
+                  htmlFor="position"
+                  className="mb-2 block text-sm font-semibold text-slate-700"
+                >
+                  Poste *
+                </label>
+
+                <input
+                  id="position"
+                  type="text"
+                  value={form.position}
+                  onChange={(event) =>
+                    updateForm(
+                      "position",
+                      event.target.value
+                    )
+                  }
+                  placeholder="Ex : Consultant ingénieur"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  required
+                />
               </div>
 
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <div className="flex gap-3">
-                  <span>📄</span>
+              <div>
+                <label
+                  htmlFor="location"
+                  className="mb-2 block text-sm font-semibold text-slate-700"
+                >
+                  Localisation
+                </label>
+
+                <input
+                  id="location"
+                  type="text"
+                  value={form.location}
+                  onChange={(event) =>
+                    updateForm(
+                      "location",
+                      event.target.value
+                    )
+                  }
+                  placeholder="Ex : Bâle, Suisse"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="source"
+                  className="mb-2 block text-sm font-semibold text-slate-700"
+                >
+                  Source
+                </label>
+
+                <select
+                  id="source"
+                  value={form.source}
+                  onChange={(event) =>
+                    updateForm(
+                      "source",
+                      event.target.value
+                    )
+                  }
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                >
+                  <option value="">
+                    Sélectionner une source
+                  </option>
+                  <option value="LinkedIn">
+                    LinkedIn
+                  </option>
+                  <option value="Indeed">
+                    Indeed
+                  </option>
+                  <option value="HelloWork">
+                    HelloWork
+                  </option>
+                  <option value="Site entreprise">
+                    Site entreprise
+                  </option>
+                  <option value="Candidature spontanée">
+                    Candidature spontanée
+                  </option>
+                  <option value="Autre">
+                    Autre
+                  </option>
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="application_date"
+                  className="mb-2 block text-sm font-semibold text-slate-700"
+                >
+                  Date de candidature
+                </label>
+
+                <input
+                  id="application_date"
+                  type="date"
+                  value={form.application_date}
+                  onChange={(event) =>
+                    updateForm(
+                      "application_date",
+                      event.target.value
+                    )
+                  }
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="status"
+                  className="mb-2 block text-sm font-semibold text-slate-700"
+                >
+                  Statut
+                </label>
+
+                <select
+                  id="status"
+                  value={form.status}
+                  onChange={(event) =>
+                    updateForm(
+                      "status",
+                      event.target.value
+                    )
+                  }
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                >
+                  <option>Candidature envoyée</option>
+                  <option>En attente</option>
+                  <option>Entretien</option>
+                  <option>Relance</option>
+                  <option>Offre reçue</option>
+                  <option>Acceptée</option>
+                  <option>Refusée</option>
+                </select>
+              </div>
+
+              <details className="rounded-lg border border-slate-200">
+                <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700">
+                  Informations supplémentaires
+                </summary>
+
+                <div className="space-y-4 border-t border-slate-200 p-4">
                   <div>
-                    <p className="text-sm font-semibold">
-                      Adapter un CV
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Nouvelle offre détectée
-                    </p>
+                    <label
+                      htmlFor="job_url"
+                      className="mb-2 block text-sm font-semibold text-slate-700"
+                    >
+                      Lien de l'offre
+                    </label>
+
+                    <input
+                      id="job_url"
+                      type="url"
+                      value={form.job_url}
+                      onChange={(event) =>
+                        updateForm(
+                          "job_url",
+                          event.target.value
+                        )
+                      }
+                      placeholder="https://..."
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="recruiter"
+                      className="mb-2 block text-sm font-semibold text-slate-700"
+                    >
+                      Recruteur
+                    </label>
+
+                    <input
+                      id="recruiter"
+                      type="text"
+                      value={form.recruiter}
+                      onChange={(event) =>
+                        updateForm(
+                          "recruiter",
+                          event.target.value
+                        )
+                      }
+                      placeholder="Nom du contact"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="recruiter_email"
+                      className="mb-2 block text-sm font-semibold text-slate-700"
+                    >
+                      Email du recruteur
+                    </label>
+
+                    <input
+                      id="recruiter_email"
+                      type="email"
+                      value={form.recruiter_email}
+                      onChange={(event) =>
+                        updateForm(
+                          "recruiter_email",
+                          event.target.value
+                        )
+                      }
+                      placeholder="contact@entreprise.com"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="salary"
+                      className="mb-2 block text-sm font-semibold text-slate-700"
+                    >
+                      Salaire
+                    </label>
+
+                    <input
+                      id="salary"
+                      type="text"
+                      value={form.salary}
+                      onChange={(event) =>
+                        updateForm(
+                          "salary",
+                          event.target.value
+                        )
+                      }
+                      placeholder="Ex : 45 000 € brut/an"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="notes"
+                      className="mb-2 block text-sm font-semibold text-slate-700"
+                    >
+                      Notes
+                    </label>
+
+                    <textarea
+                      id="notes"
+                      value={form.notes}
+                      onChange={(event) =>
+                        updateForm(
+                          "notes",
+                          event.target.value
+                        )
+                      }
+                      placeholder="Informations importantes, suivi, prochaines étapes..."
+                      rows={5}
+                      className="w-full resize-y rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
                   </div>
                 </div>
+              </details>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="w-full rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+              >
+                {submitting
+                  ? "Ajout en cours..."
+                  : "➕ Ajouter la candidature"}
+              </button>
+            </form>
+          </section>
+
+          {/* LISTE DES CANDIDATURES */}
+          <section className="overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-sm">
+            <div className="flex items-start justify-between border-b border-slate-200 px-7 py-6">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800">
+                  Mes candidatures
+                </h2>
+
+                <p className="mt-1 text-slate-500">
+                  Données enregistrées dans JobTracker
+                </p>
               </div>
             </div>
-          </div>
-        </section>
 
-        {/* Email sync */}
-        <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="font-semibold">📬 Synchronisation des emails</h3>
-              <p className="mt-1 text-sm text-slate-500">
-                Outlook et Yahoo seront analysés en lecture seule.
-              </p>
-            </div>
+            {loading && (
+              <div className="p-8 text-center text-slate-500">
+                Chargement des candidatures...
+              </div>
+            )}
 
-            <span className="inline-flex w-fit items-center rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600">
-              ⚪ Non connecté
-            </span>
-          </div>
-        </section>
+            {!loading && applications.length === 0 && (
+              <div className="p-10 text-center text-slate-500">
+                Aucune candidature enregistrée pour le moment.
+              </div>
+            )}
+
+            {!loading &&
+              applications.map((application) => (
+                <article
+                  key={application.id}
+                  className="border-b border-slate-200 px-7 py-6 last:border-b-0"
+                >
+                  <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <h3 className="text-xl font-bold text-slate-800">
+                        {application.position}
+                      </h3>
+
+                      <p className="mt-1 text-lg text-slate-700">
+                        {application.company}
+                      </p>
+
+                      {application.location && (
+                        <p className="mt-2 text-base text-slate-500">
+                          📍 {application.location}
+                        </p>
+                      )}
+
+                      <div className="mt-2 flex flex-wrap gap-3 text-sm text-slate-500">
+                        {application.source && (
+                          <span>
+                            Source : {application.source}
+                          </span>
+                        )}
+
+                        {application.application_date && (
+                          <span>
+                            📅{" "}
+                            {formatDate(
+                              application.application_date
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
+                      <span
+                        className={`rounded-full px-4 py-2 text-sm font-semibold ${getStatusStyle(
+                          application.status
+                        )}`}
+                      >
+                        {application.status}
+                      </span>
+
+                      <Link
+                        href={`/applications/${application.id}`}
+                        className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 hover:shadow-md"
+                      >
+                        Ouvrir la fiche →
+                      </Link>
+                    </div>
+                  </div>
+                </article>
+              ))}
+          </section>
+        </div>
       </div>
     </main>
   );
