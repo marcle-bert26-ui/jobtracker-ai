@@ -373,26 +373,59 @@ def _process_message(db, account_key, message_id, subject, sender_email,
 # --------------------------------------------------------------------------
 
 def _get_email_body_imap(msg):
+    MIN_USEFUL_LENGTH = 50  # en dessous, on considère le texte brut inutilisable
+
+    plain_text = ""
+    html_text = ""
+
     if msg.is_multipart():
         for part in msg.walk():
             content_type = part.get_content_type()
             disposition = str(part.get("Content-Disposition") or "")
 
-            if content_type == "text/plain" and "attachment" not in disposition:
+            if "attachment" in disposition:
+                continue
+
+            if content_type == "text/plain" and not plain_text:
                 try:
                     payload = part.get_payload(decode=True)
                     charset = part.get_content_charset() or "utf-8"
-                    return payload.decode(charset, errors="ignore")
+                    plain_text = payload.decode(charset, errors="ignore")
                 except Exception:
-                    continue
-        return ""
+                    pass
 
-    try:
-        payload = msg.get_payload(decode=True)
-        charset = msg.get_content_charset() or "utf-8"
-        return payload.decode(charset, errors="ignore") if payload else ""
-    except Exception:
-        return ""
+            elif content_type == "text/html" and not html_text:
+                try:
+                    payload = part.get_payload(decode=True)
+                    charset = part.get_content_charset() or "utf-8"
+                    html_text = payload.decode(charset, errors="ignore")
+                except Exception:
+                    pass
+    else:
+        try:
+            payload = msg.get_payload(decode=True)
+            charset = msg.get_content_charset() or "utf-8"
+            decoded = payload.decode(charset, errors="ignore") if payload else ""
+        except Exception:
+            decoded = ""
+
+        if msg.get_content_type() == "text/html":
+            html_text = decoded
+        else:
+            plain_text = decoded
+
+    # La version texte brut est souvent quasi vide sur les emails marketing /
+    # notifications (LinkedIn, Indeed...), qui ne mettent le vrai contenu que
+    # dans le HTML. On se rabat dessus si le texte brut est trop court.
+    if len(plain_text.strip()) >= MIN_USEFUL_LENGTH:
+        return plain_text
+
+    if html_text:
+        stripped = _strip_html(html_text)
+        if stripped:
+            return stripped
+
+    return plain_text
 
 
 def sync_account_imap(db, account_key, config, result, days=None, reset=False):
