@@ -382,6 +382,13 @@ def _classify(subject, sender_email, sender_name, body):
     if _is_always_ignore(full_text):
         return "ignore", None, None
 
+    # Pré-filtre rapide (mots-clés) AVANT d'appeler l'IA : si l'email n'a
+    # même pas un vague rapport avec le recrutement, inutile de faire
+    # patienter tout le scan pour un appel IA (lent) qui dira "ignore" de
+    # toute façon — newsletters, promos, réseaux sociaux, etc.
+    if not _contains_any(full_text, KEYWORDS_JOB_RELATED):
+        return "ignore", None, None
+
     if ai_is_available():
         ai_result = classify_with_ai(subject, sender_email, sender_name, body)
 

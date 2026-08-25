@@ -1,4 +1,12 @@
 from dotenv import load_dotenv
+
+# IMPORTANT : le .env doit être chargé avant tout import qui en dépend
+# (routes -> services -> ai_classifier lit OLLAMA_MODEL dès son import).
+# Si load_dotenv() est appelé après ces imports, les valeurs du .env
+# n'existent pas encore et les valeurs par défaut sont figées en mémoire
+# pour toute la durée du programme, peu importe ce que contient le .env.
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,8 +16,6 @@ from routes.emails import router as emails_router
 from routes.history import router as history_router
 
 import models
-
-load_dotenv()
 
 Base.metadata.create_all(bind=engine)
 run_lightweight_migrations()
