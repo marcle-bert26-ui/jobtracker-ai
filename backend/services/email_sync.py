@@ -134,6 +134,16 @@ COMPANY_TEXT_PATTERNS = [
         r"\b(?:vue|reçue?|consultée?)\s+par\s+([^\.\n]{2,60}?)(?:[\.\n]|$)",
         re.IGNORECASE,
     ),
+    # "Marc, votre candidature a été envoyée à Groupe SII" (Indeed)
+    re.compile(
+        r"\benvoyée?\s+(?:à|a)\s+([^\.\n]{2,60}?)(?:[\.\n]|$)",
+        re.IGNORECASE,
+    ),
+    # "candidature transmise auprès de XYZ"
+    re.compile(
+        r"\bauprès de\s+([^\.\n]{2,60}?)(?:[\.\n]|$)",
+        re.IGNORECASE,
+    ),
     # "Artelia - Suivi de votre candidature"
     re.compile(
         r"^[\s\u200b]*([^\-\|:\n]{2,60}?)\s*[\-\|:]\s*Suivi de (?:votre|la) candidature",

@@ -25,7 +25,7 @@ Non encore implémenté (objectifs futurs) : préparation de CV adaptés et de l
 - **Emails** :
   - Outlook / Outlook scolaire via Microsoft Graph (OAuth device flow, `msal`)
   - Yahoo / Gmail via IMAP (mot de passe d'application)
-- **Classification IA** : Ollama en local (modèle configurable, ex. `llama3.1:8b`), avec repli automatique sur un système de règles par mots-clés (FR/EN) si Ollama n'est pas disponible
+- **Classification IA** : Ollama en local (modèle configurable, ex. `llama3.2`), avec repli automatique sur un système de règles par mots-clés (FR/EN) si Ollama n'est pas disponible
 - **Versioning** : Git + GitHub
 
 ## Structure du projet
@@ -67,10 +67,8 @@ jobtracker-ai/
 cd backend
 python -m venv .venv
 source .venv/bin/activate  # Windows : .venv\Scripts\activate
-pip install fastapi uvicorn sqlalchemy python-dotenv requests msal
+pip install -r requirements.txt
 ```
-
-> ⚠️ Il n'existe pas encore de `requirements.txt` figé dans le repo — la liste ci-dessus est déduite des imports du code.
 
 Créer un fichier `backend/.env` :
 
@@ -88,8 +86,12 @@ GMAIL_APP_PASSWORD=xxxxxxxxxxxxxxxx
 
 # IA locale (optionnel — sans ça, repli automatique sur les mots-clés)
 OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.1:8b
+OLLAMA_MODEL=llama3.2:latest
 ```
+
+> ℹ️ Vérifie le nom exact de ton modèle avec `ollama list` dans un terminal,
+> et utilise cette valeur exacte pour `OLLAMA_MODEL` (le nom doit
+> correspondre précisément, y compris `:latest` ou une autre étiquette).
 
 Lancer le serveur :
 
@@ -109,6 +111,12 @@ python authorize_outlook.py outlook_school
 
 ### Frontend
 
+Créer un fichier `frontend/.env.local` (optionnel — par défaut, l'app utilise `http://127.0.0.1:8000`) :
+
+```env
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
+```
+
 ```bash
 cd frontend
 npm install
@@ -116,8 +124,6 @@ npm run dev
 ```
 
 L'application est disponible sur `http://localhost:3000`.
-
-> ⚠️ L'URL de l'API (`http://127.0.0.1:8000`) est actuellement codée en dur dans le frontend plutôt que définie via une variable d'environnement.
 
 ## Fonctionnement de la synchronisation des emails
 
@@ -140,7 +146,7 @@ L'application est disponible sur `http://localhost:3000`.
 
 ## Roadmap
 
-- [ ] Génération de `requirements.txt` / `pyproject.toml`
-- [ ] Variable d'environnement pour l'URL de l'API côté frontend
+- [x] Génération de `requirements.txt` / `pyproject.toml`
+- [x] Variable d'environnement pour l'URL de l'API côté frontend
 - [ ] Préparation de CV adaptés et de lettres de motivation
 - [ ] Rappels / relances automatiques (détection des candidatures sans réponse)

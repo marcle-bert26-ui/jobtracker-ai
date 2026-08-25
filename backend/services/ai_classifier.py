@@ -32,8 +32,24 @@ Si is_job_related est false, event_type doit être "ignore"."""
 def is_available() -> bool:
     try:
         response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
-        return response.status_code == 200
-    except Exception:
+        if response.status_code != 200:
+            print(
+                f"[ollama] {OLLAMA_URL}/api/tags a répondu "
+                f"{response.status_code} — Ollama semble mal configuré."
+            )
+            return False
+        return True
+    except requests.exceptions.ConnectionError:
+        print(
+            f"[ollama] Connexion refusée sur {OLLAMA_URL} — "
+            f"Ollama n'est probablement pas lancé."
+        )
+        return False
+    except requests.exceptions.Timeout:
+        print(f"[ollama] Timeout (2s) en contactant {OLLAMA_URL}.")
+        return False
+    except Exception as e:
+        print(f"[ollama] Erreur inattendue au ping ({type(e).__name__}) : {e}")
         return False
 
 
@@ -78,16 +94,53 @@ def classify_with_ai(subject, sender_email, sender_name, body):
             },
             timeout=90,
         )
-
-        response.raise_for_status()
-        raw_content = response.json()["message"]["content"]
-
-        parsed = json.loads(raw_content)
-
-        if "event_type" not in parsed:
-            return None
-
-        return parsed
-
-    except Exception:
+    except requests.exceptions.Timeout:
+        print(
+            f"[ollama] Timeout (90s dépassées) pour le modèle "
+            f"'{OLLAMA_MODEL}' — trop lent ou machine surchargée."
+        )
         return None
+    except requests.exceptions.ConnectionError:
+        print(
+            f"[ollama] Connexion perdue avec {OLLAMA_URL} pendant "
+            f"la requête — Ollama a-t-il crashé ou été arrêté ?"
+        )
+        return None
+    except Exception as e:
+        print(f"[ollama] Erreur réseau inattendue ({type(e).__name__}) : {e}")
+        return None
+
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError:
+        # Cas fréquent : modèle non téléchargé -> 404 avec un message
+        # explicite d'Ollama ("model 'xxx' not found, try pulling it").
+        print(
+            f"[ollama] Erreur HTTP {response.status_code} : "
+            f"{response.text[:300]}"
+        )
+        return None
+
+    try:
+        raw_content = response.json()["message"]["content"]
+    except (KeyError, ValueError) as e:
+        print(
+            f"[ollama] Réponse Ollama mal formée (pas de "
+            f"message.content) : {e} — corps brut : {response.text[:300]!r}"
+        )
+        return None
+
+    try:
+        parsed = json.loads(raw_content)
+    except json.JSONDecodeError:
+        print(
+            f"[ollama] Le modèle n'a pas renvoyé de JSON valide "
+            f"malgré 'format: json' : {raw_content[:300]!r}"
+        )
+        return None
+
+    if "event_type" not in parsed:
+        print(f"[ollama] JSON valide mais sans clé 'event_type' : {parsed}")
+        return None
+
+    return parsed
