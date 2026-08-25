@@ -430,7 +430,7 @@ def build_email_link(account_key, message_id, subject, graph_weblink=None):
     if account_key == "yahoo":
         if not subject:
             return None
-        return f"https://mail.yahoo.com/d/search/keyword={quote(subject)}"
+        return f"https://mail.yahoo.com/n/search/keyword={quote(subject)}"
 
     return None
 
