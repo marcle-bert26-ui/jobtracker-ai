@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from database import Base, engine
+from database import Base, engine, run_lightweight_migrations
 from routes.applications import router as applications_router
 from routes.emails import router as emails_router
 from routes.history import router as history_router
@@ -12,6 +12,7 @@ import models
 load_dotenv()
 
 Base.metadata.create_all(bind=engine)
+run_lightweight_migrations()
 
 app = FastAPI(
     title="JobTracker AI API",

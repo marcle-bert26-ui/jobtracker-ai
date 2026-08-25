@@ -179,6 +179,13 @@ class ProcessedEmail(Base):
         nullable=True,
     )
 
+    # Lien pour rouvrir l'email dans la boîte mail (Gmail, Outlook) ou une
+    # recherche approchante (Yahoo, qui n'expose pas de lien direct fiable).
+    email_link: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,

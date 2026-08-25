@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timedelta
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
+from urllib.parse import quote
 
 import requests
 
@@ -47,12 +48,32 @@ GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 # --------------------------------------------------------------------------
 
 KEYWORDS_JOB_RELATED = [
-    "candidature", "candidat", "poste", "offre d'emploi", "offre emploi",
-    "recrutement", "recruteur", "entretien", "cv", "curriculum",
-    "processus de recrutement", "opportunité", "profil",
-    "application", "position", "job", "career", "recruiting",
-    "recruiter", "interview", "hiring", "opportunity", "resume",
-    "talent acquisition", "hr team",
+    "candidature", "candidat", "offre d'emploi", "offre emploi",
+    "recrutement", "recruteur", "entretien", "curriculum vitae",
+    "processus de recrutement", "profil recruteur",
+    "application", "career", "recruiting",
+    "recruiter", "interview", "hiring", "resume",
+    "talent acquisition", "hr team", "ressources humaines",
+    "embauche",
+]
+
+# Emails qui contiennent souvent des mots-clés "candidature" mais qui ne
+# concernent PAS un vrai suivi de candidature déjà engagée : alertes /
+# recommandations d'offres, ou documents administratifs sans rapport
+# (bulletin de paie...). Vérifiés en priorité, avant tout le reste.
+KEYWORDS_ALWAYS_IGNORE = [
+    "correspondent à votre profil", "recommandé pour vous",
+    "offres similaires recommandées", "pourraient vous intéresser",
+    "job alert", "jobs recommended for you", "based on your profile",
+    "nouveaux postes correspondent", "offres d'emploi similaires",
+    "new jobs that match", "we found jobs for you",
+    "recommended for you based on", "emplois susceptibles de",
+    "bulletin de paie", "fiche de paie", "payslip", "bulletin de salaire",
+]
+
+ALWAYS_IGNORE_PATTERNS = [
+    re.compile(r"\d+\s+nouveaux?\s+postes?", re.IGNORECASE),
+    re.compile(r"\d+\s+new\s+jobs?", re.IGNORECASE),
 ]
 
 KEYWORDS_NEW_APPLICATION = [
@@ -101,6 +122,65 @@ GENERIC_DOMAINS = {
     "message.linkedin.com",
 }
 
+# Sur les plateformes génériques (LinkedIn, HelloWork, Indeed...), le vrai
+# nom de l'entreprise n'apparaît jamais dans l'expéditeur — seulement dans
+# le sujet ou le corps du mail. Ces motifs couvrent les formulations les
+# plus courantes utilisées par ces plateformes.
+COMPANY_TEXT_PATTERNS = [
+    # "Votre candidature chez TRIGO", "... chez NIPRO Corporation - Grenoble"
+    re.compile(r"\bchez\s+([^\-\|\n]{2,60}?)(?:\s*[\-\|]|\s*$)", re.IGNORECASE),
+    # "Votre candidature a été vue par ALCANDRE", "reçue par XYZ"
+    re.compile(
+        r"\b(?:vue|reçue?|consultée?)\s+par\s+([^\.\n]{2,60}?)(?:[\.\n]|$)",
+        re.IGNORECASE,
+    ),
+    # "Artelia - Suivi de votre candidature"
+    re.compile(
+        r"^[\s\u200b]*([^\-\|:\n]{2,60}?)\s*[\-\|:]\s*Suivi de (?:votre|la) candidature",
+        re.IGNORECASE,
+    ),
+    # "l'équipe de recrutement de ALCANDRE" (souvent dans le corps du mail)
+    re.compile(
+        r"équipe de recrutement de\s+([^\.\n]{2,60}?)(?:[\.\n]|$)",
+        re.IGNORECASE,
+    ),
+]
+
+# Mots trop génériques pour être un nom d'entreprise valable — si une
+# extraction ne renvoie que ça, on considère qu'elle a échoué.
+COMPANY_NOISE_WORDS = {
+    "vous", "nous", "votre profil", "cette entreprise", "l'entreprise",
+    "ce poste", "un poste",
+}
+
+
+def extract_company_from_text(subject, body):
+    """
+    Cherche le nom de l'entreprise dans le sujet, puis dans le début du
+    corps du mail, via des motifs typiques des plateformes d'emploi.
+    Retourne None si rien de fiable n'est trouvé.
+    """
+    subject = subject or ""
+    body_excerpt = (body or "")[:1000]
+
+    for source in (subject, body_excerpt):
+        for pattern in COMPANY_TEXT_PATTERNS:
+            match = pattern.search(source)
+            if not match:
+                continue
+
+            candidate = match.group(1).strip(" \u200b'\"“”·,.")
+
+            if not candidate or candidate.lower() in COMPANY_NOISE_WORDS:
+                continue
+
+            if len(candidate) < 2 or len(candidate) > 60:
+                continue
+
+            return candidate
+
+    return None
+
 
 # --------------------------------------------------------------------------
 # UTILITAIRES COMMUNS
@@ -139,11 +219,23 @@ def _strip_html(html_text):
 
 def _contains_any(text, keywords):
     lowered = text.lower()
-    return any(keyword in lowered for keyword in keywords)
+    return any(
+        re.search(rf"\b{re.escape(keyword.lower())}\b", lowered)
+        for keyword in keywords
+    )
+
+
+def _is_always_ignore(full_text):
+    if _contains_any(full_text, KEYWORDS_ALWAYS_IGNORE):
+        return True
+    return any(pattern.search(full_text) for pattern in ALWAYS_IGNORE_PATTERNS)
 
 
 def classify_email(subject, body):
     full_text = f"{subject}\n{body}"
+
+    if _is_always_ignore(full_text):
+        return "ignore"
 
     if not _contains_any(full_text, KEYWORDS_JOB_RELATED):
         return "ignore"
@@ -163,13 +255,22 @@ def classify_email(subject, body):
     return "email_recu"
 
 
-def extract_company(sender_email, sender_name):
+def extract_company(sender_email, sender_name, subject="", body=""):
     domain = sender_email.split("@")[-1].lower() if "@" in sender_email else ""
     root_domain = ".".join(domain.split(".")[-2:]) if domain else ""
+    is_generic = bool(domain) and (
+        root_domain in GENERIC_DOMAINS or domain in GENERIC_DOMAINS
+    )
 
-    if domain and root_domain not in GENERIC_DOMAINS and domain not in GENERIC_DOMAINS:
+    if domain and not is_generic:
         company_guess = domain.split(".")[0]
         return company_guess.replace("-", " ").capitalize()
+
+    # Domaine générique (plateforme d'emploi) : le nom de l'entreprise n'est
+    # pas dans l'expéditeur — on essaie de le repérer dans le sujet/corps.
+    from_text = extract_company_from_text(subject, body)
+    if from_text:
+        return from_text
 
     if sender_name:
         cleaned = re.sub(
@@ -263,6 +364,14 @@ def _classify(subject, sender_email, sender_name, body):
     Essaie d'abord l'IA locale (Ollama) si disponible, sinon se rabat
     sur les règles-clés.
     """
+    full_text = f"{subject}\n{body}"
+
+    # Court-circuit : alertes/recommandations d'offres, documents
+    # administratifs (fiche de paie...) — jamais un vrai suivi de
+    # candidature, inutile de solliciter l'IA pour ça.
+    if _is_always_ignore(full_text):
+        return "ignore", None, None
+
     if ai_is_available():
         ai_result = classify_with_ai(subject, sender_email, sender_name, body)
 
@@ -276,10 +385,17 @@ def _classify(subject, sender_email, sender_name, body):
             position = (ai_result.get("position") or "").strip() or None
 
             if event_type != "ignore":
-                company = company or extract_company(sender_email, sender_name)
+                company = company or extract_company(
+                    sender_email, sender_name, subject, body
+                )
                 position = position or extract_position(subject)
 
             return event_type, company, position
+
+        print(
+            f"[classification] IA indisponible/échec — repli mots-clés "
+            f"pour : {subject[:60]!r}"
+        )
 
     # Repli sur les règles-clés (Ollama indisponible ou réponse invalide)
     event_type = classify_email(subject, body)
@@ -289,13 +405,39 @@ def _classify(subject, sender_email, sender_name, body):
 
     return (
         event_type,
-        extract_company(sender_email, sender_name),
+        extract_company(sender_email, sender_name, subject, body),
         extract_position(subject),
     )
 
 
+def build_email_link(account_key, message_id, subject, graph_weblink=None):
+    """
+    Construit un lien permettant de rouvrir l'email dans sa boîte mail.
+    - Outlook (Graph) : lien officiel fourni par Microsoft (le plus fiable).
+    - Gmail : lien de recherche par Message-ID (ouvre l'email exact).
+    - Yahoo : Yahoo n'expose pas de lien fiable par Message-ID — on retombe
+      sur une recherche par sujet (approximatif, mais mieux que rien).
+    """
+    if account_key in ("outlook", "outlook_school"):
+        return graph_weblink or None
+
+    if account_key == "gmail":
+        clean_id = (message_id or "").strip("<>")
+        if not clean_id:
+            return None
+        return f"https://mail.google.com/mail/u/0/#search/rfc822msgid:{quote(clean_id)}"
+
+    if account_key == "yahoo":
+        if not subject:
+            return None
+        return f"https://mail.yahoo.com/d/search/keyword={quote(subject)}"
+
+    return None
+
+
 def _process_message(db, account_key, message_id, subject, sender_email,
-                      sender_name, body, received_at, result):
+                      sender_name, body, received_at, result,
+                      graph_weblink=None):
     """
     Logique de classification + création/mise à jour partagée entre
     IMAP et Microsoft Graph. Modifie `result` en place.
@@ -315,6 +457,10 @@ def _process_message(db, account_key, message_id, subject, sender_email,
         subject, sender_email, sender_name, body
     )
 
+    email_link = build_email_link(
+        account_key, message_id, subject, graph_weblink=graph_weblink
+    )
+
     processed_entry = ProcessedEmail(
         message_id=message_id,
         account=account_key,
@@ -322,6 +468,7 @@ def _process_message(db, account_key, message_id, subject, sender_email,
         subject=subject[:500],
         received_at=received_at,
         event_type=event_type,
+        email_link=email_link,
     )
 
     if event_type == "ignore":
@@ -564,7 +711,7 @@ def sync_account_graph(db, account_key, result, days=None, reset=False):
     url = (
         f"{GRAPH_BASE_URL}/me/mailFolders/Inbox/messages"
         f"?$filter=receivedDateTime ge {since_iso}"
-        f"&$select=internetMessageId,subject,from,receivedDateTime,body"
+        f"&$select=internetMessageId,subject,from,receivedDateTime,body,webLink"
         f"&$top=50"
         f"&$orderby=receivedDateTime desc"
     )
@@ -623,6 +770,7 @@ def sync_account_graph(db, account_key, result, days=None, reset=False):
                 _process_message(
                     db, account_key, message_id, subject, sender_email,
                     sender_name, body, received_at, result,
+                    graph_weblink=message.get("webLink"),
                 )
 
             url = payload.get("@odata.nextLink")

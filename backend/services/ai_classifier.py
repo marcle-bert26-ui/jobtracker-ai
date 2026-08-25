@@ -20,7 +20,11 @@ Règles :
 - "reponse_positive" : offre d'embauche, proposition de contrat.
 - "reponse_negative" : refus, rejet de candidature.
 - "email_recu" : lié au recrutement mais dans aucune catégorie ci-dessus.
-- "ignore" : non lié à une candidature déjà engagée (newsletters, alertes génériques, spam, autre).
+- "ignore" : non lié à une candidature déjà engagée. Exemples à toujours
+  classer "ignore" : newsletters, alertes/recommandations d'offres génériques
+  ("5 nouveaux postes correspondent à votre profil", "offres similaires
+  recommandées"), spam, documents administratifs (fiche/bulletin de paie),
+  autre.
 
 Si is_job_related est false, event_type doit être "ignore"."""
 
@@ -39,7 +43,10 @@ def classify_with_ai(subject, sender_email, sender_name, body):
     ou None si Ollama n'est pas disponible / la réponse est invalide
     (l'appelant se rabat alors sur les règles-clés).
     """
-    truncated_body = (body or "")[:2500]
+    # Les emails de plateformes (LinkedIn, HelloWork...) commencent souvent
+    # par du texte de navigation/menu sans intérêt avant le vrai contenu —
+    # on laisse une marge large pour ne pas couper l'info utile.
+    truncated_body = (body or "")[:6000]
 
     user_content = (
         f"Expéditeur : {sender_name} <{sender_email}>\n"
@@ -58,9 +65,18 @@ def classify_with_ai(subject, sender_email, sender_name, body):
                 ],
                 "format": "json",
                 "stream": False,
-                "options": {"temperature": 0},
+                "options": {
+                    "temperature": 0,
+                    # Par défaut, Ollama utilise une fenêtre de contexte
+                    # réduite (souvent 2048 tokens) quel que soit le modèle,
+                    # ce qui peut tronquer silencieusement le prompt système
+                    # et une partie du mail. On force une fenêtre plus large
+                    # pour être sûr que tout le texte envoyé est bien pris
+                    # en compte.
+                    "num_ctx": 8192,
+                },
             },
-            timeout=60,
+            timeout=90,
         )
 
         response.raise_for_status()

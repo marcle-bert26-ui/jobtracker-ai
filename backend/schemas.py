@@ -65,6 +65,7 @@ class ProcessedEmailResponse(BaseModel):
     received_at: datetime | None = None
     event_type: str
     application_id: int | None = None
+    email_link: str | None = None
     created_at: datetime
 
     class Config:

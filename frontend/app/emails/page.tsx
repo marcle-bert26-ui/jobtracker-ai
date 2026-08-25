@@ -11,6 +11,7 @@ type ProcessedEmail = {
   received_at: string | null;
   event_type: string;
   application_id: number | null;
+  email_link: string | null;
   created_at: string;
 };
 
@@ -134,6 +135,12 @@ export default function EmailLogPage() {
               Pour vérifier ce que la détection automatique a repéré — ou
               raté. Si un email de candidature a été ignoré à tort, note son
               sujet exact pour affiner les mots-clés.
+              <br />
+              <span className="text-slate-400">
+                ✉️ = clique pour rouvrir l&apos;email dans ta boîte mail
+                (Gmail/Outlook : lien direct — Yahoo : recherche
+                approchante par sujet, faute de lien direct fiable).
+              </span>
             </p>
 
             <div className="mt-4 flex gap-2">
@@ -196,10 +203,36 @@ export default function EmailLogPage() {
           {!loading && filteredEntries.length > 0 && (
             <ul className="divide-y divide-slate-100">
               {filteredEntries.map((entry) => (
-                <li key={entry.id} className="px-6 py-4 md:px-8">
+                <li
+                  key={entry.id}
+                  onClick={() => {
+                    if (entry.email_link) {
+                      window.open(
+                        entry.email_link,
+                        "_blank",
+                        "noopener,noreferrer"
+                      );
+                    }
+                  }}
+                  className={`px-6 py-4 md:px-8 ${
+                    entry.email_link
+                      ? "cursor-pointer transition hover:bg-slate-50"
+                      : ""
+                  }`}
+                  title={
+                    entry.email_link
+                      ? "Ouvrir cet email dans la boîte mail"
+                      : undefined
+                  }
+                >
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <p className="truncate font-medium text-slate-900">
+                        {entry.email_link && (
+                          <span className="mr-1.5" aria-hidden="true">
+                            ✉️
+                          </span>
+                        )}
                         {entry.subject || "(sans objet)"}
                       </p>
 
@@ -222,6 +255,7 @@ export default function EmailLogPage() {
                       {entry.application_id && (
                         <Link
                           href={`/applications/${entry.application_id}`}
+                          onClick={(e) => e.stopPropagation()}
                           className="text-xs font-medium text-blue-600 hover:underline"
                         >
                           Voir la fiche →
