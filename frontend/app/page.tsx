@@ -139,6 +139,56 @@ export default function Home() {
   );
   const [syncError, setSyncError] = useState("");
 
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+
+  const [statusFilter, setStatusFilter] = useState<string>("Toutes");
+
+  const statusCounts = applications.reduce<Record<string, number>>(
+    (counts, application) => {
+      counts[application.status] = (counts[application.status] || 0) + 1;
+      return counts;
+    },
+    {}
+  );
+
+  const availableStatuses = Object.keys(statusCounts).sort();
+
+  const filteredApplications =
+    statusFilter === "Toutes"
+      ? applications
+      : applications.filter(
+          (application) => application.status === statusFilter
+        );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkBackend() {
+      try {
+        const response = await fetch(`${API_URL}/health`, {
+          signal: AbortSignal.timeout(3000),
+        });
+
+        if (!cancelled) {
+          setBackendOnline(response.ok);
+        }
+      } catch {
+        if (!cancelled) {
+          setBackendOnline(false);
+        }
+      }
+    }
+
+    checkBackend();
+    const interval = setInterval(checkBackend, 10000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+
   async function handleSyncEmails() {
     await runSync(`${API_URL}/emails/sync`);
   }
@@ -313,7 +363,32 @@ export default function Home() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${
+                backendOnline === null
+                  ? "bg-slate-100 text-slate-500"
+                  : backendOnline
+                  ? "bg-green-50 text-green-700"
+                  : "bg-red-50 text-red-700"
+              }`}
+            >
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  backendOnline === null
+                    ? "bg-slate-400"
+                    : backendOnline
+                    ? "bg-green-500"
+                    : "bg-red-500 animate-pulse"
+                }`}
+              />
+              {backendOnline === null
+                ? "Vérification..."
+                : backendOnline
+                ? "Backend connecté"
+                : "Backend déconnecté"}
+            </div>
+
             <div className="rounded-xl bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
               {applications.length} candidature
               {applications.length > 1 ? "s" : ""}
@@ -755,15 +830,46 @@ export default function Home() {
 
           {/* LISTE DES CANDIDATURES */}
           <section className="overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-sm">
-            <div className="flex items-start justify-between border-b border-slate-200 px-7 py-6">
-              <div>
-                <h2 className="text-2xl font-bold text-slate-800">
-                  Mes candidatures
-                </h2>
+            <div className="border-b border-slate-200 px-7 py-6">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-800">
+                    Mes candidatures
+                  </h2>
 
-                <p className="mt-1 text-slate-500">
-                  Données enregistrées dans JobTracker
-                </p>
+                  <p className="mt-1 text-slate-500">
+                    Données enregistrées dans JobTracker
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter("Toutes")}
+                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                    statusFilter === "Toutes"
+                      ? "bg-slate-800 text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  Toutes ({applications.length})
+                </button>
+
+                {availableStatuses.map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    onClick={() => setStatusFilter(status)}
+                    className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                      statusFilter === status
+                        ? "bg-slate-800 text-white"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {status} ({statusCounts[status]})
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -780,7 +886,15 @@ export default function Home() {
             )}
 
             {!loading &&
-              applications.map((application) => (
+              applications.length > 0 &&
+              filteredApplications.length === 0 && (
+                <div className="p-10 text-center text-slate-500">
+                  Aucune candidature avec ce statut.
+                </div>
+              )}
+
+            {!loading &&
+              filteredApplications.map((application) => (
                 <article
                   key={application.id}
                   className="border-b border-slate-200 px-7 py-6 last:border-b-0"
