@@ -38,9 +38,9 @@ if not exist "%ROOT%\frontend\node_modules" (
     exit /b 1
 )
 
-REM --- Demarrage du backend (FastAPI) ---
+REM --- Demarrage du backend (FastAPI) via script dedie (evite les guillemets imbriques) ---
 echo Demarrage du backend...
-start "JobTracker - Backend" cmd /k "cd /d "%ROOT%\backend" && call .venv\Scripts\activate.bat && powershell -NoLogo -Command "& { uvicorn main:app --reload 2>&1 | Tee-Object -FilePath sync_log.txt }""
+start "JobTracker - Backend" cmd /k call "%~dp0run_backend.bat" "%ROOT%\backend"
 
 REM --- Demarrage du frontend (Next.js) ---
 echo Demarrage du frontend...
