@@ -40,7 +40,7 @@ if not exist "%ROOT%\frontend\node_modules" (
 
 REM --- Demarrage du backend (FastAPI) ---
 echo Demarrage du backend...
-start "JobTracker - Backend" cmd /k "cd /d "%ROOT%\backend" && call .venv\Scripts\activate.bat && uvicorn main:app --reload"
+start "JobTracker - Backend" cmd /k "cd /d "%ROOT%\backend" && call .venv\Scripts\activate.bat && powershell -NoLogo -Command "& { uvicorn main:app --reload 2>&1 | Tee-Object -FilePath sync_log.txt }""
 
 REM --- Demarrage du frontend (Next.js) ---
 echo Demarrage du frontend...

@@ -139,8 +139,6 @@ export default function Home() {
   );
   const [syncError, setSyncError] = useState("");
 
-  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
-
   const [statusFilter, setStatusFilter] = useState<string>("Toutes");
 
   const statusCounts = applications.reduce<Record<string, number>>(
@@ -159,35 +157,6 @@ export default function Home() {
       : applications.filter(
           (application) => application.status === statusFilter
         );
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function checkBackend() {
-      try {
-        const response = await fetch(`${API_URL}/health`, {
-          signal: AbortSignal.timeout(3000),
-        });
-
-        if (!cancelled) {
-          setBackendOnline(response.ok);
-        }
-      } catch {
-        if (!cancelled) {
-          setBackendOnline(false);
-        }
-      }
-    }
-
-    checkBackend();
-    const interval = setInterval(checkBackend, 10000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
-
 
   async function handleSyncEmails() {
     await runSync(`${API_URL}/emails/sync`);
@@ -364,31 +333,6 @@ export default function Home() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <div
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${
-                backendOnline === null
-                  ? "bg-slate-100 text-slate-500"
-                  : backendOnline
-                  ? "bg-green-50 text-green-700"
-                  : "bg-red-50 text-red-700"
-              }`}
-            >
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  backendOnline === null
-                    ? "bg-slate-400"
-                    : backendOnline
-                    ? "bg-green-500"
-                    : "bg-red-500 animate-pulse"
-                }`}
-              />
-              {backendOnline === null
-                ? "Vérification..."
-                : backendOnline
-                ? "Backend connecté"
-                : "Backend déconnecté"}
-            </div>
-
             <div className="rounded-xl bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
               {applications.length} candidature
               {applications.length > 1 ? "s" : ""}
@@ -452,7 +396,7 @@ export default function Home() {
             </p>
 
             <p className="mt-1 text-xs text-slate-400">
-              La détection utilise l'IA locale (Ollama) si elle est lancée sur
+              La détection utilise l&apos;IA locale (Ollama) si elle est lancée sur
               ton PC, sinon des règles-clés en secours.
             </p>
 
@@ -704,7 +648,7 @@ export default function Home() {
                       htmlFor="job_url"
                       className="mb-2 block text-sm font-semibold text-slate-700"
                     >
-                      Lien de l'offre
+                      Lien de l&apos;offre
                     </label>
 
                     <input

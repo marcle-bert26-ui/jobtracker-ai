@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API_URL = "http://127.0.0.1:8000";
 const CHECK_INTERVAL_MS = 10000;
 const TIMEOUT_MS = 4000;
 
@@ -38,47 +38,82 @@ const STATUS_CONFIG: Record<
 export default function BackendStatus() {
   const [status, setStatus] = useState<ConnectionStatus>("checking");
 
+  const pingBackend = useCallback(async (): Promise<ConnectionStatus> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`${API_URL}/health`, {
+        signal: controller.signal,
+      });
+      return response.ok ? "online" : "offline";
+    } catch {
+      return "offline";
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
-    async function checkHealth() {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-      try {
-        const response = await fetch(`${API_URL}/health`, {
-          signal: controller.signal,
-        });
-
-        if (!cancelled) {
-          setStatus(response.ok ? "online" : "offline");
-        }
-      } catch {
-        if (!cancelled) {
-          setStatus("offline");
-        }
-      } finally {
-        clearTimeout(timeoutId);
+    async function runCheck() {
+      const result = await pingBackend();
+      if (!cancelled) {
+        setStatus(result);
       }
     }
 
-    checkHealth();
-    const interval = setInterval(checkHealth, CHECK_INTERVAL_MS);
+    runCheck();
+    const interval = setInterval(runCheck, CHECK_INTERVAL_MS);
 
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [pingBackend]);
+
+  const handleManualRetry = async () => {
+    setStatus("checking");
+
+    // Déclenche le protocole personnalisé enregistré dans Windows (une
+    // fois via launcher/enregistrer_protocole.vbs), qui relance le
+    // backend. Si le protocole n'a jamais été enregistré, le navigateur
+    // ignore silencieusement cette ligne (aucun risque).
+    window.location.href = "jobtracker://start";
+
+    // Le backend met quelques secondes à redémarrer : on revérifie
+    // plusieurs fois avant d'abandonner.
+    const ATTEMPTS = 8;
+    const DELAY_MS = 2000;
+
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+      const result = await pingBackend();
+
+      if (result === "online") {
+        setStatus("online");
+        return;
+      }
+    }
+
+    setStatus("offline");
+  };
 
   const config = STATUS_CONFIG[status];
+  const isClickable = status === "offline";
 
   return (
     <div
-      className={`fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full border ${config.border} ${config.bg} px-3 py-1.5 text-xs font-semibold ${config.text} shadow-md`}
+      onClick={isClickable ? handleManualRetry : undefined}
+      role={isClickable ? "button" : undefined}
+      tabIndex={isClickable ? 0 : undefined}
+      className={`fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full border ${config.border} ${config.bg} px-3 py-1.5 text-xs font-semibold ${config.text} shadow-md ${
+        isClickable ? "cursor-pointer transition hover:brightness-95" : ""
+      }`}
       title={
         status === "offline"
-          ? "Le serveur backend ne répond pas. Vérifie qu'il est bien lancé."
+          ? "Clique pour relancer le backend automatiquement (nécessite d'avoir enregistré le protocole une fois — voir launcher/enregistrer_protocole.vbs)."
           : undefined
       }
     >
@@ -88,6 +123,7 @@ export default function BackendStatus() {
         }`}
       />
       {config.label}
+      {isClickable && <span className="ml-0.5">↻</span>}
     </div>
   );
 }
