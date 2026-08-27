@@ -16,7 +16,15 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte avant ou après,
 
 Règles :
 - "nouvelle_candidature" : confirme la réception d'une candidature déjà envoyée par l'utilisateur.
-- "entretien" : invitation à un entretien, un appel, un échange RH.
+  Cela inclut les accusés de réception automatiques (Workday, Greenhouse, Lever...) même si le
+  texte mentionne, au conditionnel ou au futur, qu'un entretien pourra suivre plus tard
+  ("nous vous contacterons pour un entretien si votre profil correspond", "we will contact you
+  for an interview if..."). Une simple mention future/hypothétique d'entretien dans un mail de
+  confirmation ne doit JAMAIS faire basculer la catégorie en "entretien".
+- "entretien" : le mail propose ou confirme une date/créneau concret d'entretien, d'appel ou
+  d'échange RH (ex : "Êtes-vous disponible mardi à 14h ?", "voici le lien de visioconférence").
+  Si le mail est avant tout un accusé de réception de candidature, classe-le en
+  "nouvelle_candidature" même s'il évoque un entretien à venir.
 - "reponse_positive" : offre d'embauche, proposition de contrat.
 - "reponse_negative" : refus, rejet de candidature.
 - "email_recu" : lié au recrutement mais dans aucune catégorie ci-dessus.

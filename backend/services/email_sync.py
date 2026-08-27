@@ -256,11 +256,20 @@ def classify_email(subject, body):
     if _contains_any(full_text, KEYWORDS_POSITIVE):
         return "reponse_positive"
 
-    if _contains_any(full_text, KEYWORDS_INTERVIEW):
-        return "entretien"
-
+    # KEYWORDS_NEW_APPLICATION est vérifié AVANT KEYWORDS_INTERVIEW à
+    # dessein : ce sont des formulations très spécifiques ("nous avons
+    # bien reçu votre candidature", "thank you for applying"...), donc un
+    # signal fiable. KEYWORDS_INTERVIEW contient à l'inverse des mots
+    # génériques ("interview", "next steps", "invite you"...) qui
+    # apparaissent très souvent dans le boilerplate des mails de simple
+    # confirmation de candidature (ex : "we will contact you for an
+    # interview if your profile matches"). Sans cette priorité, ce genre
+    # de mail de confirmation était classé à tort "entretien".
     if _contains_any(full_text, KEYWORDS_NEW_APPLICATION):
         return "nouvelle_candidature"
+
+    if _contains_any(full_text, KEYWORDS_INTERVIEW):
+        return "entretien"
 
     return "email_recu"
 
@@ -347,19 +356,33 @@ def _should_upgrade_status(current_status, new_status):
     )
 
 
-def find_matching_application(db, company):
+def find_matching_application(db, company, position=None):
+    """
+    Cherche une candidature existante pour cette entreprise.
+    Si `position` est fourni, filtre aussi dessus (matching plus strict) :
+    utilisé pour éviter de créer une fiche en double pour un même couple
+    entreprise + poste quand plusieurs emails (entretien, refus...) arrivent
+    sans qu'une "nouvelle_candidature" ait été trackée au préalable.
+    Sans `position`, le matching reste large (entreprise seule) : c'est le
+    comportement voulu pour rattacher un email de suivi à une candidature
+    déjà trackée, même si le poste est reformulé différemment d'un mail à
+    l'autre.
+    """
     if not company or company == "Entreprise inconnue":
         return None
 
     ninety_days_ago = datetime.utcnow() - timedelta(days=90)
 
-    return (
+    query = (
         db.query(Application)
         .filter(Application.company.ilike(f"%{company}%"))
         .filter(Application.created_at >= ninety_days_ago)
-        .order_by(Application.created_at.desc())
-        .first()
     )
+
+    if position and position != "Poste non précisé":
+        query = query.filter(Application.position.ilike(f"%{position}%"))
+
+    return query.order_by(Application.created_at.desc()).first()
 
 
 VALID_EVENT_TYPES = {
@@ -499,21 +522,47 @@ def _process_message(db, account_key, message_id, subject, sender_email,
     new_status = _status_for_event(event_type)
 
     if application is None:
-        if event_type != "nouvelle_candidature":
-            result["ignored"] += 1
-            db.add(processed_entry)
-            return
+        if event_type == "nouvelle_candidature":
+            application = Application(
+                company=company or "Entreprise inconnue",
+                position=position_hint or "Poste non précisé",
+                source="Email (détection automatique)",
+                application_date=received_at or datetime.utcnow(),
+                status=new_status or "Candidature envoyée",
+            )
+            db.add(application)
+            db.flush()
+            result["new_applications"] += 1
+        else:
+            # Pas de "nouvelle_candidature" trackée pour cette entreprise
+            # (candidature envoyée avant l'activation de l'outil, ou email
+            # d'entretien/réponse reçu directement d'un recruteur). On crée
+            # quand même une fiche plutôt que d'ignorer l'email — mais on
+            # vérifie d'abord qu'une fiche n'existe pas déjà pour ce même
+            # couple entreprise + poste, pour ne pas créer de doublon si un
+            # email précédent du même type l'a déjà créée.
+            duplicate = find_matching_application(
+                db, company, position=position_hint
+            )
 
-        application = Application(
-            company=company or "Entreprise inconnue",
-            position=position_hint or "Poste non précisé",
-            source="Email (détection automatique)",
-            application_date=received_at or datetime.utcnow(),
-            status=new_status or "Candidature envoyée",
-        )
-        db.add(application)
-        db.flush()
-        result["new_applications"] += 1
+            if duplicate is not None:
+                application = duplicate
+                if new_status and _should_upgrade_status(
+                    application.status, new_status
+                ):
+                    application.status = new_status
+                result["updated_applications"] += 1
+            else:
+                application = Application(
+                    company=company or "Entreprise inconnue",
+                    position=position_hint or "Poste non précisé",
+                    source="Email (détection automatique)",
+                    application_date=received_at or datetime.utcnow(),
+                    status=new_status or "Email reçu",
+                )
+                db.add(application)
+                db.flush()
+                result["new_applications"] += 1
     else:
         if new_status and _should_upgrade_status(application.status, new_status):
             application.status = new_status
