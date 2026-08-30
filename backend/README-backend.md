@@ -13,7 +13,7 @@ uvicorn main:app --reload
 
 API disponible sur `http://127.0.0.1:8000`, documentation interactive sur `http://127.0.0.1:8000/docs`.
 
-Nécessite un fichier `.env` à la racine de `backend/` — voir le [README principal](../README.md#backend) pour le détail des variables (`MS_CLIENT_ID`, `YAHOO_EMAIL`/`YAHOO_APP_PASSWORD`, `GMAIL_EMAIL`/`GMAIL_APP_PASSWORD`, `OLLAMA_URL`/`OLLAMA_MODEL`).
+Nécessite un fichier `.env` à la racine de `backend/` — voir le [README principal](../README.md#backend) pour le détail des variables (`OUTLOOK_EMAIL`/`OUTLOOK_SCHOOL_EMAIL`, `YAHOO_EMAIL`/`YAHOO_APP_PASSWORD`, `GMAIL_EMAIL`/`GMAIL_APP_PASSWORD`, `OLLAMA_URL`/`OLLAMA_MODEL`).
 
 > ⚠️ Aucun `requirements.txt` n'est encore présent dans le repo ; la commande `pip install` ci-dessus liste les dépendances déduites des imports.
 
@@ -25,14 +25,14 @@ backend/
 ├── database.py              # Engine SQLAlchemy, session, Base (SQLite : jobtracker.db)
 ├── models.py                 # Modèles SQLAlchemy
 ├── schemas.py                 # Schémas Pydantic (requêtes/réponses)
-├── graph_auth.py              # Authentification Microsoft Graph (OAuth device flow, cache token)
-├── authorize_outlook.py       # Script CLI : autorisation manuelle d'un compte Outlook
+├── graph_auth.py              # (inutilisé) ancien flux OAuth Microsoft Graph, conservé au cas où
+├── authorize_outlook.py       # (inutilisé) idem
 ├── routes/
 │   ├── applications.py        # CRUD candidatures
 │   ├── history.py             # Historique des interactions
 │   └── emails.py              # Déclenchement de sync + journal des emails
 └── services/
-    ├── email_sync.py           # Cœur de la sync : IMAP (Yahoo/Gmail) + Graph (Outlook), classification, rapprochement
+    ├── email_sync.py           # Cœur de la sync : IMAP (Yahoo/Gmail) + Outlook Desktop COM (Outlook), classification, rapprochement
     └── ai_classifier.py        # Appel à Ollama pour classifier un email (avec repli sur mots-clés géré dans email_sync.py)
 ```
 
@@ -45,12 +45,7 @@ backend/
 
 ## Authentification des comptes email
 
-- **Outlook / Outlook scolaire** (Microsoft Graph) : nécessitent une autorisation OAuth manuelle une seule fois par compte, via device code flow :
-  ```bash
-  python authorize_outlook.py outlook
-  python authorize_outlook.py outlook_school
-  ```
-  Le token est ensuite mis en cache dans `backend/token_cache/` et renouvelé silencieusement.
+- **Outlook / Outlook scolaire** (COM via Outlook Desktop) : aucune authentification à gérer côté app — Outlook Desktop doit juste être installé (Windows) avec les comptes déjà configurés dedans. Le backend pilote l'application Outlook existante via `pywin32`, en identifiant le bon compte par son adresse SMTP (`OUTLOOK_EMAIL` / `OUTLOOK_SCHOOL_EMAIL` dans `.env`).
 - **Yahoo / Gmail** (IMAP) : authentification par mot de passe d'application, fourni via `.env` — aucune étape manuelle supplémentaire.
 
 ## Synchronisation et classification des emails

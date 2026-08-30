@@ -23,7 +23,7 @@ Non encore implémenté (objectifs futurs) : préparation de CV adaptés et de l
 - **Backend** : FastAPI (Python), SQLAlchemy
 - **Base de données** : SQLite (fichier local `jobtracker.db`)
 - **Emails** :
-  - Outlook / Outlook scolaire via Microsoft Graph (OAuth device flow, `msal`)
+  - Outlook / Outlook scolaire via l'application Outlook Desktop installée sur Windows (pilotage COM, `pywin32`) — pas d'OAuth, pas d'Azure, il suffit que les comptes soient déjà configurés dans Outlook
   - Yahoo / Gmail via IMAP (mot de passe d'application)
 - **Classification IA** : Ollama en local (modèle configurable, ex. `llama3.2`), avec repli automatique sur un système de règles par mots-clés (FR/EN) si Ollama n'est pas disponible
 - **Versioning** : Git + GitHub
@@ -37,14 +37,14 @@ jobtracker-ai/
 │   ├── database.py               # Config SQLAlchemy / SQLite
 │   ├── models.py                 # Application, InteractionHistory, ProcessedEmail, SyncState
 │   ├── schemas.py                 # Schémas Pydantic
-│   ├── graph_auth.py              # Auth Microsoft Graph (OAuth device flow)
-│   ├── authorize_outlook.py       # Script CLI pour autoriser un compte Outlook
+│   ├── graph_auth.py              # (inutilisé) ancien flux OAuth Microsoft Graph, conservé au cas où
+│   ├── authorize_outlook.py       # (inutilisé) idem
 │   ├── routes/
 │   │   ├── applications.py        # CRUD des candidatures
 │   │   ├── history.py             # Historique des interactions par candidature
 │   │   └── emails.py              # Synchronisation et journal des emails
 │   └── services/
-│       ├── email_sync.py          # Sync IMAP + Microsoft Graph, classification, matching
+│       ├── email_sync.py          # Sync IMAP + Outlook Desktop (COM), classification, matching
 │       └── ai_classifier.py       # Appel à Ollama pour classifier un email
 └── frontend/
     └── app/
@@ -73,8 +73,11 @@ pip install -r requirements.txt
 Créer un fichier `backend/.env` :
 
 ```env
-# Microsoft Graph (Outlook / Outlook scolaire)
-MS_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+# Outlook / Outlook scolaire (lus via l'application Outlook Desktop
+# installée en local — mets l'adresse EXACTE telle qu'ajoutée dans
+# Outlook, Fichier > Paramètres du compte)
+OUTLOOK_EMAIL=exemple@outlook.fr
+OUTLOOK_SCHOOL_EMAIL=exemple@edu.egsi.org
 
 # Yahoo (mot de passe d'application, pas le mot de passe du compte)
 YAHOO_EMAIL=exemple@yahoo.fr
@@ -102,12 +105,7 @@ uvicorn main:app --reload
 
 L'API est disponible sur `http://127.0.0.1:8000` (doc interactive sur `/docs`).
 
-**Première autorisation des comptes Outlook** (une seule fois par compte, flux OAuth device code) :
-
-```bash
-python authorize_outlook.py outlook
-python authorize_outlook.py outlook_school
-```
+**Pré-requis pour la lecture des mails Outlook** : l'application Outlook Desktop doit être installée sur la machine (Windows uniquement), avec les deux comptes (`OUTLOOK_EMAIL` et `OUTLOOK_SCHOOL_EMAIL`) déjà ajoutés dedans. Aucune autre étape d'autorisation n'est nécessaire — pas d'Azure, pas d'OAuth.
 
 ### Frontend
 

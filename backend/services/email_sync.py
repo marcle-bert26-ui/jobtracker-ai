@@ -19,7 +19,11 @@ from services.ai_classifier import classify_with_ai, is_available as ai_is_avail
 
 ACCOUNTS = {
     "outlook": {
-        "protocol": "graph",
+        "protocol": "imap",
+        "email_env": "OUTLOOK_EMAIL",
+        "password_env": "OUTLOOK_APP_PASSWORD",
+        "imap_server": "outlook.office365.com",
+        "imap_port": 993,
     },
     "outlook_school": {
         "protocol": "graph",
@@ -51,10 +55,9 @@ KEYWORDS_JOB_RELATED = [
     "candidature", "candidat", "offre d'emploi", "offre emploi",
     "recrutement", "recruteur", "entretien", "curriculum vitae",
     "processus de recrutement", "profil recruteur",
-    "application", "career", "recruiting",
-    "recruiter", "interview", "hiring", "resume",
-    "talent acquisition", "hr team", "ressources humaines",
-    "embauche",
+    "recruiter", "interview", "talent acquisition", "hr team",
+    "ressources humaines", "embauche",
+    "postulé", "postulée", "postuler", "postulant",
 ]
 
 # Emails qui contiennent souvent des mots-clés "candidature" mais qui ne
@@ -256,20 +259,11 @@ def classify_email(subject, body):
     if _contains_any(full_text, KEYWORDS_POSITIVE):
         return "reponse_positive"
 
-    # KEYWORDS_NEW_APPLICATION est vérifié AVANT KEYWORDS_INTERVIEW à
-    # dessein : ce sont des formulations très spécifiques ("nous avons
-    # bien reçu votre candidature", "thank you for applying"...), donc un
-    # signal fiable. KEYWORDS_INTERVIEW contient à l'inverse des mots
-    # génériques ("interview", "next steps", "invite you"...) qui
-    # apparaissent très souvent dans le boilerplate des mails de simple
-    # confirmation de candidature (ex : "we will contact you for an
-    # interview if your profile matches"). Sans cette priorité, ce genre
-    # de mail de confirmation était classé à tort "entretien".
-    if _contains_any(full_text, KEYWORDS_NEW_APPLICATION):
-        return "nouvelle_candidature"
-
     if _contains_any(full_text, KEYWORDS_INTERVIEW):
         return "entretien"
+
+    if _contains_any(full_text, KEYWORDS_NEW_APPLICATION):
+        return "nouvelle_candidature"
 
     return "email_recu"
 
@@ -356,39 +350,51 @@ def _should_upgrade_status(current_status, new_status):
     )
 
 
-def find_matching_application(db, company, position=None):
-    """
-    Cherche une candidature existante pour cette entreprise.
-    Si `position` est fourni, filtre aussi dessus (matching plus strict) :
-    utilisé pour éviter de créer une fiche en double pour un même couple
-    entreprise + poste quand plusieurs emails (entretien, refus...) arrivent
-    sans qu'une "nouvelle_candidature" ait été trackée au préalable.
-    Sans `position`, le matching reste large (entreprise seule) : c'est le
-    comportement voulu pour rattacher un email de suivi à une candidature
-    déjà trackée, même si le poste est reformulé différemment d'un mail à
-    l'autre.
-    """
+def find_matching_application(db, company):
     if not company or company == "Entreprise inconnue":
         return None
 
     ninety_days_ago = datetime.utcnow() - timedelta(days=90)
 
-    query = (
+    return (
         db.query(Application)
         .filter(Application.company.ilike(f"%{company}%"))
         .filter(Application.created_at >= ninety_days_ago)
+        .order_by(Application.created_at.desc())
+        .first()
     )
-
-    if position and position != "Poste non précisé":
-        query = query.filter(Application.position.ilike(f"%{position}%"))
-
-    return query.order_by(Application.created_at.desc()).first()
 
 
 VALID_EVENT_TYPES = {
     "nouvelle_candidature", "entretien", "reponse_positive",
     "reponse_negative", "email_recu", "ignore",
 }
+
+
+# Formulations qui confirment vraiment l'envoi d'une candidature. Utilisées
+# comme garde-fou : même si l'IA affirme "nouvelle_candidature", on ne crée
+# une nouvelle fiche que si l'une de ces formulations est bien présente —
+# ça évite qu'un email mal interprété (newsletter, promo...) ne crée une
+# candidature fantôme.
+KEYWORDS_APPLICATION_CONFIRMED = KEYWORDS_NEW_APPLICATION + [
+    "candidature", "candidat", "postulé", "postulée", "postuler",
+]
+
+
+def _guard_new_application(event_type, full_text):
+    """
+    Rétrograde "nouvelle_candidature" en "email_recu" si aucune formulation
+    de confirmation n'est présente dans le texte — protection contre une
+    mauvaise classification (IA ou mots-clés) qui créerait une candidature
+    fantôme à partir d'un email sans rapport.
+    """
+    if event_type != "nouvelle_candidature":
+        return event_type
+
+    if _contains_any(full_text, KEYWORDS_APPLICATION_CONFIRMED):
+        return event_type
+
+    return "email_recu"
 
 
 def _classify(subject, sender_email, sender_name, body):
@@ -409,7 +415,11 @@ def _classify(subject, sender_email, sender_name, body):
     # même pas un vague rapport avec le recrutement, inutile de faire
     # patienter tout le scan pour un appel IA (lent) qui dira "ignore" de
     # toute façon — newsletters, promos, réseaux sociaux, etc.
-    if not _contains_any(full_text, KEYWORDS_JOB_RELATED):
+    # On ne regarde QUE le sujet ici (pas le corps) : le corps contient
+    # souvent des boutons/liens génériques ("Postuler", "Mes candidatures")
+    # même sur de simples alertes d'offres, ce qui déclencherait l'IA à
+    # tort. Le sujet seul est un signal beaucoup plus fiable.
+    if not _contains_any(subject, KEYWORDS_JOB_RELATED):
         return "ignore", None, None
 
     if ai_is_available():
@@ -423,6 +433,8 @@ def _classify(subject, sender_email, sender_name, body):
 
             company = (ai_result.get("company") or "").strip() or None
             position = (ai_result.get("position") or "").strip() or None
+
+            event_type = _guard_new_application(event_type, full_text)
 
             if event_type != "ignore":
                 company = company or extract_company(
@@ -439,6 +451,7 @@ def _classify(subject, sender_email, sender_name, body):
 
     # Repli sur les règles-clés (Ollama indisponible ou réponse invalide)
     event_type = classify_email(subject, body)
+    event_type = _guard_new_application(event_type, full_text)
 
     if event_type == "ignore":
         return event_type, None, None
@@ -522,47 +535,21 @@ def _process_message(db, account_key, message_id, subject, sender_email,
     new_status = _status_for_event(event_type)
 
     if application is None:
-        if event_type == "nouvelle_candidature":
-            application = Application(
-                company=company or "Entreprise inconnue",
-                position=position_hint or "Poste non précisé",
-                source="Email (détection automatique)",
-                application_date=received_at or datetime.utcnow(),
-                status=new_status or "Candidature envoyée",
-            )
-            db.add(application)
-            db.flush()
-            result["new_applications"] += 1
-        else:
-            # Pas de "nouvelle_candidature" trackée pour cette entreprise
-            # (candidature envoyée avant l'activation de l'outil, ou email
-            # d'entretien/réponse reçu directement d'un recruteur). On crée
-            # quand même une fiche plutôt que d'ignorer l'email — mais on
-            # vérifie d'abord qu'une fiche n'existe pas déjà pour ce même
-            # couple entreprise + poste, pour ne pas créer de doublon si un
-            # email précédent du même type l'a déjà créée.
-            duplicate = find_matching_application(
-                db, company, position=position_hint
-            )
+        if event_type != "nouvelle_candidature":
+            result["ignored"] += 1
+            db.add(processed_entry)
+            return
 
-            if duplicate is not None:
-                application = duplicate
-                if new_status and _should_upgrade_status(
-                    application.status, new_status
-                ):
-                    application.status = new_status
-                result["updated_applications"] += 1
-            else:
-                application = Application(
-                    company=company or "Entreprise inconnue",
-                    position=position_hint or "Poste non précisé",
-                    source="Email (détection automatique)",
-                    application_date=received_at or datetime.utcnow(),
-                    status=new_status or "Email reçu",
-                )
-                db.add(application)
-                db.flush()
-                result["new_applications"] += 1
+        application = Application(
+            company=company or "Entreprise inconnue",
+            position=position_hint or "Poste non précisé",
+            source="Email (détection automatique)",
+            application_date=received_at or datetime.utcnow(),
+            status=new_status or "Candidature envoyée",
+        )
+        db.add(application)
+        db.flush()
+        result["new_applications"] += 1
     else:
         if new_status and _should_upgrade_status(application.status, new_status):
             application.status = new_status
