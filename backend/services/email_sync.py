@@ -20,9 +20,9 @@ from services.ai_classifier import classify_with_ai, is_available as ai_is_avail
 ACCOUNTS = {
     "outlook": {
         "protocol": "imap",
-        "email_env": "OUTLOOK_EMAIL",
-        "password_env": "OUTLOOK_APP_PASSWORD",
-        "imap_server": "outlook.office365.com",
+        "email_env": "OUTLOOK_RELAY_EMAIL",
+        "password_env": "OUTLOOK_RELAY_APP_PASSWORD",
+        "imap_server": "imap.gmail.com",
         "imap_port": 993,
     },
     "outlook_school": {
@@ -466,24 +466,30 @@ def _classify(subject, sender_email, sender_name, body):
 def build_email_link(account_key, message_id, subject, graph_weblink=None):
     """
     Construit un lien permettant de rouvrir l'email dans sa boîte mail.
-    - Outlook (Graph) : lien officiel fourni par Microsoft (le plus fiable).
+    - Outlook scolaire (Graph) : lien officiel fourni par Microsoft (le plus
+      fiable).
+    - Outlook personnel (IMAP) : pas de lien fiable par Message-ID connu —
+      on retombe sur une recherche par sujet (approximatif).
     - Gmail : lien de recherche par Message-ID (ouvre l'email exact).
     - Yahoo : Yahoo n'expose pas de lien fiable par Message-ID — on retombe
       sur une recherche par sujet (approximatif, mais mieux que rien).
     """
-    if account_key in ("outlook", "outlook_school"):
+    if account_key == "outlook_school":
         return graph_weblink or None
-
-    if account_key == "gmail":
-        clean_id = (message_id or "").strip("<>")
-        if not clean_id:
-            return None
-        return f"https://mail.google.com/mail/u/0/#search/rfc822msgid:{quote(clean_id)}"
 
     if account_key == "yahoo":
         if not subject:
             return None
         return f"https://mail.yahoo.com/n/search/keyword={quote(subject)}"
+
+    if account_key in ("outlook", "gmail"):
+        # "outlook" utilise en réalité une boîte Gmail relais (voir
+        # OUTLOOK_RELAY_EMAIL) — les emails y sont physiquement stockés,
+        # donc on ouvre bien Gmail, pas outlook.live.com.
+        clean_id = (message_id or "").strip("<>")
+        if not clean_id:
+            return None
+        return f"https://mail.google.com/mail/u/0/#search/rfc822msgid:{quote(clean_id)}"
 
     return None
 
@@ -635,6 +641,15 @@ def sync_account_imap(db, account_key, config, result, days=None, reset=False):
     result["configured"] = bool(address and password)
 
     if not address or not password:
+        missing = []
+        if not address:
+            missing.append(config["email_env"])
+        if not password:
+            missing.append(config["password_env"])
+        print(
+            f"[{account_key}] Compte non configuré — variable(s) manquante(s) "
+            f"dans .env : {', '.join(missing)}"
+        )
         return result
 
     if reset:
