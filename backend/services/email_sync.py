@@ -729,6 +729,11 @@ def sync_account_imap(db, account_key, config, result, days=None, reset=False):
                 sender_name, body, received_at, result,
             )
 
+            # Sauvegarde immédiate : si la synchro est interrompue plus
+            # tard (coupure réseau, redémarrage du serveur...), tout ce
+            # qui a déjà été traité reste enregistré au lieu d'être perdu.
+            db.commit()
+
         connection.close()
         connection.logout()
 
@@ -849,6 +854,11 @@ def sync_account_graph(db, account_key, result, days=None, reset=False):
                     sender_name, body, received_at, result,
                     graph_weblink=message.get("webLink"),
                 )
+
+                # Sauvegarde immédiate : si la synchro est interrompue plus
+                # tard (coupure réseau, redémarrage du serveur...), tout ce
+                # qui a déjà été traité reste enregistré au lieu d'être perdu.
+                db.commit()
 
             url = payload.get("@odata.nextLink")
 
