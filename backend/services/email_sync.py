@@ -25,6 +25,9 @@ ACCOUNTS = {
         "imap_server": "imap.gmail.com",
         "imap_port": 993,
     },
+    "outlook_school": {
+        "protocol": "graph",
+    },
     "yahoo": {
         "protocol": "imap",
         "email_env": "YAHOO_EMAIL",
@@ -396,9 +399,11 @@ def _guard_new_application(event_type, full_text):
 
 def _classify(subject, sender_email, sender_name, body):
     """
-    Retourne (event_type, company, position).
+    Retourne (event_type, company, position, location).
     Essaie d'abord l'IA locale (Ollama) si disponible, sinon se rabat
-    sur les règles-clés.
+    sur les règles-clés. Sans IA, la localisation n'est pas détectable
+    de façon fiable (pas de mot-clé ni de domaine qui l'indique) : elle
+    vaut toujours None dans ce cas et reste à compléter manuellement.
     """
     full_text = f"{subject}\n{body}"
 
@@ -406,7 +411,7 @@ def _classify(subject, sender_email, sender_name, body):
     # administratifs (fiche de paie...) — jamais un vrai suivi de
     # candidature, inutile de solliciter l'IA pour ça.
     if _is_always_ignore(full_text):
-        return "ignore", None, None
+        return "ignore", None, None, None
 
     # Pré-filtre rapide (mots-clés) AVANT d'appeler l'IA : si l'email n'a
     # même pas un vague rapport avec le recrutement, inutile de faire
@@ -417,7 +422,7 @@ def _classify(subject, sender_email, sender_name, body):
     # même sur de simples alertes d'offres, ce qui déclencherait l'IA à
     # tort. Le sujet seul est un signal beaucoup plus fiable.
     if not _contains_any(subject, KEYWORDS_JOB_RELATED):
-        return "ignore", None, None
+        return "ignore", None, None, None
 
     if ai_is_available():
         ai_result = classify_with_ai(subject, sender_email, sender_name, body)
@@ -430,6 +435,7 @@ def _classify(subject, sender_email, sender_name, body):
 
             company = (ai_result.get("company") or "").strip() or None
             position = (ai_result.get("position") or "").strip() or None
+            location = (ai_result.get("location") or "").strip() or None
 
             event_type = _guard_new_application(event_type, full_text)
 
@@ -439,7 +445,7 @@ def _classify(subject, sender_email, sender_name, body):
                 )
                 position = position or extract_position(subject)
 
-            return event_type, company, position
+            return event_type, company, position, location
 
         print(
             f"[classification] IA indisponible/échec — repli mots-clés "
@@ -451,31 +457,39 @@ def _classify(subject, sender_email, sender_name, body):
     event_type = _guard_new_application(event_type, full_text)
 
     if event_type == "ignore":
-        return event_type, None, None
+        return event_type, None, None, None
 
     return (
         event_type,
         extract_company(sender_email, sender_name, subject, body),
         extract_position(subject),
+        None,
     )
 
 
 def build_email_link(account_key, message_id, subject, graph_weblink=None):
     """
     Construit un lien permettant de rouvrir l'email dans sa boîte mail.
-    - Outlook (perso et scolaire) : utilisent en réalité un relais Gmail
-      (transfert automatique configuré côté Outlook) — les emails y sont
-      physiquement stockés, donc on ouvre bien Gmail.
+    - Outlook scolaire (Graph) : lien officiel fourni par Microsoft (le plus
+      fiable).
+    - Outlook personnel (IMAP) : pas de lien fiable par Message-ID connu —
+      on retombe sur une recherche par sujet (approximatif).
     - Gmail : lien de recherche par Message-ID (ouvre l'email exact).
     - Yahoo : Yahoo n'expose pas de lien fiable par Message-ID — on retombe
       sur une recherche par sujet (approximatif, mais mieux que rien).
     """
+    if account_key == "outlook_school":
+        return graph_weblink or None
+
     if account_key == "yahoo":
         if not subject:
             return None
         return f"https://mail.yahoo.com/n/search/keyword={quote(subject)}"
 
     if account_key in ("outlook", "gmail"):
+        # "outlook" utilise en réalité une boîte Gmail relais (voir
+        # OUTLOOK_RELAY_EMAIL) — les emails y sont physiquement stockés,
+        # donc on ouvre bien Gmail, pas outlook.live.com.
         clean_id = (message_id or "").strip("<>")
         if not clean_id:
             return None
@@ -502,7 +516,7 @@ def _process_message(db, account_key, message_id, subject, sender_email,
 
     result["scanned"] += 1
 
-    event_type, company, position_hint = _classify(
+    event_type, company, position_hint, location = _classify(
         subject, sender_email, sender_name, body
     )
 
@@ -539,6 +553,7 @@ def _process_message(db, account_key, message_id, subject, sender_email,
         application = Application(
             company=company or "Entreprise inconnue",
             position=position_hint or "Poste non précisé",
+            location=location,
             source="Email (détection automatique)",
             application_date=received_at or datetime.utcnow(),
             status=new_status or "Candidature envoyée",
@@ -549,6 +564,10 @@ def _process_message(db, account_key, message_id, subject, sender_email,
     else:
         if new_status and _should_upgrade_status(application.status, new_status):
             application.status = new_status
+        # On ne complète que si la fiche n'a pas déjà une localisation —
+        # on ne veut jamais écraser une valeur saisie ou détectée avant.
+        if location and not application.location:
+            application.location = location
         result["updated_applications"] += 1
 
     db.add(
@@ -625,8 +644,8 @@ def _get_email_body_imap(msg):
 
 
 def sync_account_imap(db, account_key, config, result, days=None, reset=False):
-    address = (os.getenv(config["email_env"]) or "").strip()
-    password = (os.getenv(config["password_env"]) or "").strip()
+    address = os.getenv(config["email_env"])
+    password = os.getenv(config["password_env"])
 
     result["configured"] = bool(address and password)
 
@@ -720,16 +739,6 @@ def sync_account_imap(db, account_key, config, result, days=None, reset=False):
         sync_state.last_synced_at = datetime.utcnow()
         db.commit()
 
-    except UnicodeEncodeError:
-        db.rollback()
-        result["error"] = (
-            f"Le mot de passe ou l'adresse de {config['email_env']}/"
-            f"{config['password_env']} contient un caractère accentué ou "
-            "spécial (probablement collé par erreur en même temps que le "
-            "mot de passe). Ouvre ton .env et vérifie qu'il n'y a que le "
-            "mot de passe d'application lui-même (16 lettres, sans accent, "
-            "sans texte autour) sur ces deux lignes."
-        )
     except Exception as exc:  # noqa: BLE001
         db.rollback()
         result["error"] = str(exc)

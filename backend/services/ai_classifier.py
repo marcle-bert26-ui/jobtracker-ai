@@ -12,7 +12,13 @@ a déjà soumise (pas une offre d'emploi non sollicitée, pas une newsletter, pa
 d'offres génériques).
 
 Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte avant ou après, au format exact :
-{"is_job_related": true ou false, "event_type": "nouvelle_candidature" ou "entretien" ou "reponse_positive" ou "reponse_negative" ou "email_recu" ou "ignore", "company": "nom de l'entreprise ou null", "position": "intitulé du poste ou null"}
+{"is_job_related": true ou false, "event_type": "nouvelle_candidature" ou "entretien" ou "reponse_positive" ou "reponse_negative" ou "email_recu" ou "ignore", "company": "nom de l'entreprise ou null", "position": "intitulé du poste ou null", "location": "localisation du poste ou null"}
+
+Règles pour "location" :
+- Indique la ville (et le pays si mentionné et non évident) du poste, ex : "Paris", "Lyon", "Bordeaux, France".
+- Si l'email indique explicitement du télétravail total, réponds "Télétravail".
+- Si l'email mentionne un mode hybride avec une ville, réponds par exemple "Paris (hybride)".
+- Si aucune localisation n'est mentionnée dans l'email, réponds null. Ne devine jamais une ville à partir du nom de l'entreprise ou du domaine de l'expéditeur.
 
 Règles :
 - "nouvelle_candidature" : confirme la réception d'une candidature déjà envoyée par l'utilisateur.
