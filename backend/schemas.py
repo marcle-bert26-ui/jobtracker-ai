@@ -72,6 +72,32 @@ class ProcessedEmailResponse(BaseModel):
         from_attributes = True
 
 
+class ReminderApplication(BaseModel):
+    id: int
+    company: str
+    position: str
+    location: str | None = None
+    status: str
+    job_url: str | None = None
+    recruiter: str | None = None
+    recruiter_email: str | None = None
+    application_date: datetime | None = None
+    created_at: datetime
+    last_activity_date: datetime
+    days_since_last_activity: int
+    missing_fields: list[str]
+
+    class Config:
+        from_attributes = True
+
+
+class RemindersResponse(BaseModel):
+    generated_at: datetime
+    stale_days: int
+    to_relaunch: list[ReminderApplication]
+    missing_info: list[ReminderApplication]
+
+
 class AccountSyncResult(BaseModel):
     account: str
     configured: bool

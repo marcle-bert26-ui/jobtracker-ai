@@ -25,9 +25,6 @@ ACCOUNTS = {
         "imap_server": "imap.gmail.com",
         "imap_port": 993,
     },
-    "outlook_school": {
-        "protocol": "graph",
-    },
     "yahoo": {
         "protocol": "imap",
         "email_env": "YAHOO_EMAIL",
@@ -466,26 +463,19 @@ def _classify(subject, sender_email, sender_name, body):
 def build_email_link(account_key, message_id, subject, graph_weblink=None):
     """
     Construit un lien permettant de rouvrir l'email dans sa boîte mail.
-    - Outlook scolaire (Graph) : lien officiel fourni par Microsoft (le plus
-      fiable).
-    - Outlook personnel (IMAP) : pas de lien fiable par Message-ID connu —
-      on retombe sur une recherche par sujet (approximatif).
+    - Outlook (perso et scolaire) : utilisent en réalité un relais Gmail
+      (transfert automatique configuré côté Outlook) — les emails y sont
+      physiquement stockés, donc on ouvre bien Gmail.
     - Gmail : lien de recherche par Message-ID (ouvre l'email exact).
     - Yahoo : Yahoo n'expose pas de lien fiable par Message-ID — on retombe
       sur une recherche par sujet (approximatif, mais mieux que rien).
     """
-    if account_key == "outlook_school":
-        return graph_weblink or None
-
     if account_key == "yahoo":
         if not subject:
             return None
         return f"https://mail.yahoo.com/n/search/keyword={quote(subject)}"
 
     if account_key in ("outlook", "gmail"):
-        # "outlook" utilise en réalité une boîte Gmail relais (voir
-        # OUTLOOK_RELAY_EMAIL) — les emails y sont physiquement stockés,
-        # donc on ouvre bien Gmail, pas outlook.live.com.
         clean_id = (message_id or "").strip("<>")
         if not clean_id:
             return None
@@ -635,8 +625,8 @@ def _get_email_body_imap(msg):
 
 
 def sync_account_imap(db, account_key, config, result, days=None, reset=False):
-    address = os.getenv(config["email_env"])
-    password = os.getenv(config["password_env"])
+    address = (os.getenv(config["email_env"]) or "").strip()
+    password = (os.getenv(config["password_env"]) or "").strip()
 
     result["configured"] = bool(address and password)
 
@@ -730,6 +720,16 @@ def sync_account_imap(db, account_key, config, result, days=None, reset=False):
         sync_state.last_synced_at = datetime.utcnow()
         db.commit()
 
+    except UnicodeEncodeError:
+        db.rollback()
+        result["error"] = (
+            f"Le mot de passe ou l'adresse de {config['email_env']}/"
+            f"{config['password_env']} contient un caractère accentué ou "
+            "spécial (probablement collé par erreur en même temps que le "
+            "mot de passe). Ouvre ton .env et vérifie qu'il n'y a que le "
+            "mot de passe d'application lui-même (16 lettres, sans accent, "
+            "sans texte autour) sur ces deux lignes."
+        )
     except Exception as exc:  # noqa: BLE001
         db.rollback()
         result["error"] = str(exc)

@@ -46,10 +46,9 @@ type SyncAccountResult = {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const ACCOUNT_LABELS: Record<string, string> = {
-  outlook: "Outlook (perso)",
+  outlook: "Outlook",
   yahoo: "Yahoo",
   gmail: "Gmail",
-  outlook_school: "Outlook (scolaire)",
 };
 
 const initialForm: ApplicationForm = {
@@ -400,7 +399,7 @@ export default function Home() {
               ton PC, sinon des règles-clés en secours.
             </p>
 
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {syncResults.map((result) => (
                 <div
                   key={result.account}

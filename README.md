@@ -24,7 +24,8 @@ Non encore implémenté (objectifs futurs) : préparation de CV adaptés et de l
 - **Base de données** : SQLite (fichier local `jobtracker.db`)
 - **Emails** :
   - Outlook personnel / Hotmail via IMAP (mot de passe d'application)
-  - Outlook scolaire via Microsoft Graph (OAuth device flow, `msal`)
+  - Outlook (perso et scolaire) via relais Gmail dédié (voir plus bas —
+    contournement du blocage Microsoft de l'authentification IMAP directe)
   - Yahoo / Gmail via IMAP (mot de passe d'application)
 - **Classification IA** : Ollama en local (modèle configurable, ex. `llama3.2`), avec repli automatique sur un système de règles par mots-clés (FR/EN) si Ollama n'est pas disponible
 - **Versioning** : Git + GitHub
@@ -38,14 +39,14 @@ jobtracker-ai/
 │   ├── database.py               # Config SQLAlchemy / SQLite
 │   ├── models.py                 # Application, InteractionHistory, ProcessedEmail, SyncState
 │   ├── schemas.py                 # Schémas Pydantic
-│   ├── graph_auth.py              # Auth Microsoft Graph (OAuth device flow)
-│   ├── authorize_outlook.py       # Script CLI pour autoriser un compte Outlook
+│   ├── graph_auth.py              # Auth Microsoft Graph — non utilisé actuellement (voir "Outlook via relais Gmail")
+│   ├── authorize_outlook.py       # Script CLI d'autorisation Graph — inutile avec le relais Gmail
 │   ├── routes/
 │   │   ├── applications.py        # CRUD des candidatures
 │   │   ├── history.py             # Historique des interactions par candidature
 │   │   └── emails.py              # Synchronisation et journal des emails
 │   └── services/
-│       ├── email_sync.py          # Sync IMAP + Microsoft Graph, classification, matching
+│       ├── email_sync.py          # Sync IMAP (tous comptes), classification, matching
 │       └── ai_classifier.py       # Appel à Ollama pour classifier un email
 └── frontend/
     └── app/
@@ -74,15 +75,12 @@ pip install -r requirements.txt
 Créer un fichier `backend/.env` :
 
 ```env
-# Microsoft Graph (Outlook scolaire uniquement — les comptes personnels
-# passent par IMAP ci-dessous, plus simple)
-MS_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-
-# Outlook personnel / Hotmail — Microsoft bloque désormais l'authentification
-# basique en IMAP direct, même avec un mot de passe d'application. On passe
-# donc par un relais : une boîte Gmail dédiée qui reçoit tes emails Outlook
-# transférés automatiquement (voir "Outlook personnel via relais" plus bas
-# pour la configuration complète).
+# Outlook personnel / Hotmail et Outlook scolaire — Microsoft bloque
+# désormais l'authentification basique en IMAP direct (même avec un mot de
+# passe d'application), et l'inscription Azure/Microsoft Graph est
+# volontairement évitée ici. On passe donc par un relais : une seule boîte
+# Gmail dédiée qui reçoit les emails des DEUX comptes Outlook transférés
+# automatiquement (voir "Outlook via relais Gmail" plus bas).
 OUTLOOK_RELAY_EMAIL=jobtrackeraimlb@gmail.com
 OUTLOOK_RELAY_APP_PASSWORD=xxxxxxxxxxxxxxxx
 
@@ -112,13 +110,6 @@ uvicorn main:app --reload
 
 L'API est disponible sur `http://127.0.0.1:8000` (doc interactive sur `/docs`).
 
-**Première autorisation du compte Outlook scolaire** (une seule fois, flux
-OAuth device code — le compte personnel n'en a pas besoin, IMAP suffit) :
-
-```bash
-python authorize_outlook.py outlook_school
-```
-
 
 ### Frontend
 
@@ -136,30 +127,46 @@ npm run dev
 
 L'application est disponible sur `http://localhost:3000`.
 
-## Outlook personnel via relais Gmail
+## Outlook (perso et scolaire) via relais Gmail
 
 Microsoft a désactivé l'authentification "basique" (identifiant + mot de
-passe) en IMAP pour de plus en plus de comptes personnels — même avec un
-mot de passe d'application, la connexion échoue avec l'erreur
-`AUTHENTICATE failed`. Seul Microsoft Graph (OAuth) fonctionne encore
-officiellement, mais nécessite une inscription Azure.
+passe) en IMAP pour de plus en plus de comptes — même avec un mot de passe
+d'application, la connexion échoue avec l'erreur `AUTHENTICATE failed`.
+Seul Microsoft Graph (OAuth) fonctionne encore officiellement, mais
+nécessite une inscription Azure, volontairement évitée ici.
 
-Solution de contournement, sans Azure :
+Solution de contournement, sans Azure — **une seule boîte Gmail relais,
+partagée par les deux comptes Outlook** (les deux comptes Outlook
+transfèrent chacun vers cette même adresse) :
 
 1. Crée une nouvelle adresse Gmail, dédiée uniquement à cet usage
    (ex. `jobtrackeraimlb@gmail.com`).
 2. Sur ce nouveau compte Gmail : Paramètres → "Transfert et POP/IMAP" →
    active l'accès IMAP (même étape que pour le compte Gmail principal).
-3. Sur [outlook.live.com](https://outlook.live.com) → Paramètres → Courrier
-   → Transfert et IMAP → active **"Activer le transfert"** vers cette
-   nouvelle adresse Gmail.
-4. Configure `OUTLOOK_RELAY_EMAIL` / `OUTLOOK_RELAY_APP_PASSWORD` dans le
+3. Sur Outlook **personnel** ([outlook.live.com](https://outlook.live.com))
+   → Paramètres → Courrier → Transfert et IMAP → active **"Activer le
+   transfert"** vers cette adresse Gmail.
+4. Sur Outlook **scolaire** (le portail Outlook de l'établissement) → même
+   réglage → active le transfert vers la **même** adresse Gmail.
+5. Configure `OUTLOOK_RELAY_EMAIL` / `OUTLOOK_RELAY_APP_PASSWORD` dans le
    `.env` avec les identifiants de cette boîte Gmail relais (mot de passe
    d'application Gmail — nécessite la double authentification activée sur
    ce nouveau compte).
 
 Le transfert natif conserve l'expéditeur d'origine dans l'email, donc la
 détection de l'entreprise fonctionne normalement sur les emails transférés.
+
+> ℹ️ Les deux comptes Outlook sont donc regroupés sous une seule et même
+> entrée "Outlook" dans le journal des emails et les résultats de
+> synchronisation — pas de distinction entre perso/scolaire côté app,
+> puisqu'ils partagent la même boîte relais.
+
+> ⚠️ **Compte scolaire** : certains établissements bloquent le transfert
+> automatique vers une adresse externe (politique de sécurité de
+> l'administrateur Microsoft 365). Si l'option "Activer le transfert"
+> n'apparaît pas ou est grisée sur le portail Outlook de l'école, ce
+> contournement n'est pas possible pour ce compte-là — mais celui du
+> compte personnel continuera de fonctionner normalement.
 
 > ⚠️ Le bouton "ouvrir dans la boîte mail" (✉️) sur ces entrées ouvre
 > Gmail — si tu es connecté à plusieurs comptes Google dans le même
