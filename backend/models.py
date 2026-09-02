@@ -118,6 +118,13 @@ class InteractionHistory(Base):
         nullable=True,
     )
 
+    # Lien pour rouvrir l'email d'origine dans la boîte mail, quand cette
+    # entrée d'historique a été créée automatiquement depuis un email.
+    email_link: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,

@@ -40,6 +40,7 @@ type HistoryEntry = {
   type: string;
   date: string;
   note: string | null;
+  email_link: string | null;
   created_at: string;
 };
 
@@ -1111,6 +1112,17 @@ export default function ApplicationDetailPage({
                             <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
                               {entry.note}
                             </p>
+                          )}
+
+                          {entry.email_link && (
+                            <a
+                              href={entry.email_link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
+                            >
+                              📧 Ouvrir l&apos;email →
+                            </a>
                           )}
                         </div>
 

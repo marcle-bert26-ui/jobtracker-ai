@@ -51,6 +51,7 @@ class InteractionHistoryResponse(BaseModel):
     type: str
     date: datetime
     note: str | None = None
+    email_link: str | None = None
     created_at: datetime
 
     class Config:

@@ -40,3 +40,18 @@ def run_lightweight_migrations():
                     "ALTER TABLE processed_emails ADD COLUMN email_link VARCHAR(1000)"
                 )
             )
+
+    if "interaction_history" not in inspector.get_table_names():
+        return
+
+    history_columns = {
+        col["name"] for col in inspector.get_columns("interaction_history")
+    }
+
+    if "email_link" not in history_columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE interaction_history ADD COLUMN email_link VARCHAR(1000)"
+                )
+            )

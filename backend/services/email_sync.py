@@ -576,6 +576,7 @@ def _process_message(db, account_key, message_id, subject, sender_email,
             type=history_type,
             date=received_at or datetime.utcnow(),
             note=f"Détecté automatiquement — sujet : « {subject} »",
+            email_link=email_link,
         )
     )
 
