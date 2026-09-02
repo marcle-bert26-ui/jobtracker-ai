@@ -65,12 +65,20 @@ class ProcessedEmailResponse(BaseModel):
     subject: str | None = None
     received_at: datetime | None = None
     event_type: str
+    company: str | None = None
+    position: str | None = None
+    location: str | None = None
     application_id: int | None = None
     email_link: str | None = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class EmailLogResponse(BaseModel):
+    total: int
+    items: list[ProcessedEmailResponse]
 
 
 class ReminderApplication(BaseModel):

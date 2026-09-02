@@ -25,9 +25,6 @@ ACCOUNTS = {
         "imap_server": "imap.gmail.com",
         "imap_port": 993,
     },
-    "outlook_school": {
-        "protocol": "graph",
-    },
     "yahoo": {
         "protocol": "imap",
         "email_env": "YAHOO_EMAIL",
@@ -52,10 +49,10 @@ GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 # --------------------------------------------------------------------------
 
 KEYWORDS_JOB_RELATED = [
-    "candidature", "candidat", "offre d'emploi", "offre emploi",
+    "candidature", "candidat", "candidate", "offre d'emploi", "offre emploi",
     "recrutement", "recruteur", "entretien", "curriculum vitae",
     "processus de recrutement", "profil recruteur",
-    "recruiter", "interview", "talent acquisition", "hr team",
+    "recruiter", "recruiting", "interview", "talent acquisition", "hr team",
     "ressources humaines", "embauche",
     "postulé", "postulée", "postuler", "postulant",
 ]
@@ -83,10 +80,16 @@ KEYWORDS_NEW_APPLICATION = [
     "nous avons bien reçu votre candidature", "candidature a été reçue",
     "confirmation de candidature", "merci pour votre candidature",
     "votre candidature a bien été", "accusé de réception",
+    "votre candidature pour le poste", "votre candidature pour ce poste",
+    "votre candidature est arrivée", "candidature bien reçue",
+    "réception de votre candidature", "candidature transmise",
+    "candidature a bien été transmise", "candidature envoyée avec succès",
     "we received your application", "application has been received",
     "thank you for applying", "thank you for your application",
     "application confirmation", "we've received your application",
-    "your application was sent",
+    "your application was sent", "your application for",
+    "application received", "application submitted",
+    "candidate database",
 ]
 
 KEYWORDS_INTERVIEW = [
@@ -140,6 +143,13 @@ COMPANY_TEXT_PATTERNS = [
     # "Marc, votre candidature a été envoyée à Groupe SII" (Indeed)
     re.compile(
         r"\benvoyée?\s+(?:à|a)\s+([^\.\n]{2,60}?)(?:[\.\n]|$)",
+        re.IGNORECASE,
+    ),
+    # "Le groupe ARTELIA vous remercie d'avoir postulé", "SII vous remercie
+    # de votre candidature"
+    re.compile(
+        r"^(?:le\s+groupe\s+|l['\u2019]entreprise\s+|la\s+société\s+)?"
+        r"([^\.,\n]{2,60}?)\s+vous\s+remercie",
         re.IGNORECASE,
     ),
     # "candidature transmise auprès de XYZ"
@@ -470,17 +480,12 @@ def _classify(subject, sender_email, sender_name, body):
 def build_email_link(account_key, message_id, subject, graph_weblink=None):
     """
     Construit un lien permettant de rouvrir l'email dans sa boîte mail.
-    - Outlook scolaire (Graph) : lien officiel fourni par Microsoft (le plus
-      fiable).
     - Outlook personnel (IMAP) : pas de lien fiable par Message-ID connu —
       on retombe sur une recherche par sujet (approximatif).
     - Gmail : lien de recherche par Message-ID (ouvre l'email exact).
     - Yahoo : Yahoo n'expose pas de lien fiable par Message-ID — on retombe
       sur une recherche par sujet (approximatif, mais mieux que rien).
     """
-    if account_key == "outlook_school":
-        return graph_weblink or None
-
     if account_key == "yahoo":
         if not subject:
             return None
@@ -531,6 +536,9 @@ def _process_message(db, account_key, message_id, subject, sender_email,
         subject=subject[:500],
         received_at=received_at,
         event_type=event_type,
+        company=company,
+        position=position_hint,
+        location=location,
         email_link=email_link,
     )
 
@@ -540,6 +548,23 @@ def _process_message(db, account_key, message_id, subject, sender_email,
         return
 
     application = find_matching_application(db, company)
+
+    full_text = f"{subject}\n{body}"
+
+    # Filet de sécurité : un email peut clairement concerner une
+    # candidature (« Candidature: Chargé amélioration continue », « Votre
+    # candidature est arrivée chez Gelagri »...) sans reprendre l'une des
+    # formulations figées de KEYWORDS_NEW_APPLICATION. Plutôt que de le
+    # jeter silencieusement faute de candidature existante à mettre à
+    # jour, on le traite comme une nouvelle candidature dès qu'il
+    # confirme sans ambiguïté qu'il s'agit bien d'une candidature.
+    if (
+        event_type == "email_recu"
+        and application is None
+        and _contains_any(full_text, KEYWORDS_APPLICATION_CONFIRMED)
+    ):
+        event_type = "nouvelle_candidature"
+        processed_entry.event_type = event_type
 
     history_type = EVENT_TYPE_LABELS.get(event_type, "Email reçu")
     new_status = _status_for_event(event_type)

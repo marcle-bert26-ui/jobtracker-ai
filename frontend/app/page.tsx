@@ -46,7 +46,7 @@ type SyncAccountResult = {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const ACCOUNT_LABELS: Record<string, string> = {
-  outlook: "Outlook",
+  outlook: "Outlook (perso)",
   yahoo: "Yahoo",
   gmail: "Gmail",
 };
@@ -365,6 +365,13 @@ export default function Home() {
             </button>
 
             <Link
+              href="/reminders"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+            >
+              🔔 Rappels
+            </Link>
+
+            <Link
               href="/emails"
               className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
             >
@@ -399,7 +406,7 @@ export default function Home() {
               ton PC, sinon des règles-clés en secours.
             </p>
 
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
               {syncResults.map((result) => (
                 <div
                   key={result.account}

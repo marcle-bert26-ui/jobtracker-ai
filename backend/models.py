@@ -180,6 +180,24 @@ class ProcessedEmail(Base):
         nullable=False,
     )
 
+    # Ce que la détection a extrait pour cet email — utile pour comprendre
+    # pourquoi une candidature a (ou n'a pas) été créée/rattachée, et pour
+    # la recherche dans le journal.
+    company: Mapped[str | None] = mapped_column(
+        String(150),
+        nullable=True,
+    )
+
+    position: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
+
+    location: Mapped[str | None] = mapped_column(
+        String(150),
+        nullable=True,
+    )
+
     application_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("applications.id", ondelete="SET NULL"),

@@ -73,7 +73,6 @@ def device_login(account_key: str) -> None:
     """
     À exécuter manuellement une seule fois par compte :
     python authorize_outlook.py outlook
-    python authorize_outlook.py outlook_school
     """
     if not CLIENT_ID:
         raise RuntimeError(
