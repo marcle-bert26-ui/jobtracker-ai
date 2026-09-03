@@ -406,7 +406,7 @@ export default function Home() {
               ton PC, sinon des règles-clés en secours.
             </p>
 
-            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {syncResults.map((result) => (
                 <div
                   key={result.account}

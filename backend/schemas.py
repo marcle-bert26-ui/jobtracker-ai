@@ -107,6 +107,15 @@ class RemindersResponse(BaseModel):
     missing_info: list[ReminderApplication]
 
 
+class QuickApplicationResult(BaseModel):
+    application_id: int
+    created: bool
+    company: str | None = None
+    position: str | None = None
+    location: str | None = None
+    ai_used: bool = False
+
+
 class AccountSyncResult(BaseModel):
     account: str
     configured: bool

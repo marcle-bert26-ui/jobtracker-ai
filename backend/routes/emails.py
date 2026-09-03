@@ -6,9 +6,20 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
-from models import ProcessedEmail
-from schemas import AccountSyncResult, EmailLogResponse, SyncResult
-from services.email_sync import sync_all_accounts
+from models import Application, InteractionHistory, ProcessedEmail
+from schemas import (
+    AccountSyncResult,
+    EmailLogResponse,
+    QuickApplicationResult,
+    SyncResult,
+)
+from services.ai_classifier import classify_with_ai, is_available as ai_is_available
+from services.email_sync import (
+    extract_company,
+    extract_position,
+    find_matching_application,
+    sync_all_accounts,
+)
 
 router = APIRouter(
     prefix="/emails",
@@ -134,3 +145,136 @@ def get_email_log(
     )
 
     return EmailLogResponse(total=total, items=items)
+
+
+@router.post(
+    "/{email_id}/create-application",
+    response_model=QuickApplicationResult,
+)
+def create_application_from_email(
+    email_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Depuis une ligne du journal (typiquement un email ignoré ou non
+    rattaché), crée rapidement une fiche candidature à partir de ce que la
+    détection a déjà trouvé — en retentant une extraction (IA locale si
+    disponible, sinon les règles-clés) sur le sujet quand il manque encore
+    l'entreprise ou le poste. Le but n'est pas d'être parfait : juste de
+    démarrer la fiche pour que l'utilisateur la complète ensuite à la main.
+
+    Si une candidature existe déjà pour la même entreprise, l'email est
+    simplement rattaché à celle-ci plutôt que d'en créer une en double.
+    """
+    processed_email = (
+        db.query(ProcessedEmail).filter(ProcessedEmail.id == email_id).first()
+    )
+
+    if processed_email is None:
+        raise HTTPException(status_code=404, detail="Email introuvable.")
+
+    if processed_email.application_id is not None:
+        # Déjà rattaché à une fiche : on y renvoie plutôt que d'en créer
+        # une en double.
+        return QuickApplicationResult(
+            application_id=processed_email.application_id,
+            created=False,
+            company=processed_email.company,
+            position=processed_email.position,
+            location=processed_email.location,
+        )
+
+    company = processed_email.company
+    position = processed_email.position
+    location = processed_email.location
+    ai_used = False
+
+    if not company or not position:
+        subject = processed_email.subject or ""
+
+        if ai_is_available():
+            ai_used = True
+            ai_result = classify_with_ai(subject, processed_email.sender, "", "")
+
+            if ai_result:
+                company = company or (ai_result.get("company") or "").strip() or None
+                position = position or (ai_result.get("position") or "").strip() or None
+                location = location or (ai_result.get("location") or "").strip() or None
+
+        if not company:
+            company = extract_company(processed_email.sender, "", subject, "")
+
+        if not position:
+            position = extract_position(subject)
+
+    existing_application = find_matching_application(db, company) if company else None
+
+    if existing_application is not None:
+        db.add(
+            InteractionHistory(
+                application_id=existing_application.id,
+                type="Email reçu",
+                date=processed_email.received_at or datetime.utcnow(),
+                note=(
+                    "Email rattaché manuellement depuis le journal — "
+                    f"sujet : « {processed_email.subject} »"
+                ),
+                email_link=processed_email.email_link,
+            )
+        )
+        processed_email.application_id = existing_application.id
+        processed_email.company = company
+        processed_email.position = position
+        processed_email.location = location
+        db.commit()
+
+        return QuickApplicationResult(
+            application_id=existing_application.id,
+            created=False,
+            company=company,
+            position=position,
+            location=location,
+            ai_used=ai_used,
+        )
+
+    new_application = Application(
+        company=company or "Entreprise inconnue",
+        position=position or "Poste non précisé",
+        location=location,
+        source="Email (créée manuellement depuis le journal)",
+        application_date=processed_email.received_at or datetime.utcnow(),
+        status="Candidature envoyée",
+    )
+    db.add(new_application)
+    db.flush()
+
+    db.add(
+        InteractionHistory(
+            application_id=new_application.id,
+            type="Candidature envoyée",
+            date=processed_email.received_at or datetime.utcnow(),
+            note=(
+                "Fiche créée manuellement depuis le journal des emails — "
+                f"sujet : « {processed_email.subject} »"
+            ),
+            email_link=processed_email.email_link,
+        )
+    )
+
+    processed_email.application_id = new_application.id
+    processed_email.event_type = "nouvelle_candidature"
+    processed_email.company = company
+    processed_email.position = position
+    processed_email.location = location
+
+    db.commit()
+    db.refresh(new_application)
+
+    return QuickApplicationResult(
+        application_id=new_application.id,
+        created=True,
+        company=company,
+        position=position,
+        location=location,
+        ai_used=ai_used,
+    )

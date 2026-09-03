@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, use, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, use, useEffect, useRef, useState } from "react";
 
 type Application = {
   id: number;
@@ -191,6 +191,9 @@ export default function ApplicationDetailPage({
   // NEXT.JS 16 : params est une Promise, on doit utiliser use()
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const shouldAutoEdit = searchParams.get("edit") === "1";
+  const autoEditTriggered = useRef(false);
 
   const [application, setApplication] =
     useState<Application | null>(null);
@@ -283,6 +286,18 @@ export default function ApplicationDetailPage({
     loadApplication();
     loadHistory();
   }, [id]);
+
+  // Arrivée depuis "Créer une fiche" dans le journal des emails
+  // (`?edit=1`) : on ouvre directement le mode édition pour que la
+  // personne puisse tout de suite compléter/valider la fiche, sans clic
+  // supplémentaire sur "Modifier".
+  useEffect(() => {
+    if (shouldAutoEdit && application && !autoEditTriggered.current) {
+      autoEditTriggered.current = true;
+      startEditing();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldAutoEdit, application]);
 
   function startEditing() {
     if (!application) {
@@ -525,12 +540,22 @@ export default function ApplicationDetailPage({
             {error || "Candidature introuvable."}
           </p>
 
-          <Link
-            href="/"
-            className="mt-6 inline-flex rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white transition hover:bg-blue-700"
-          >
-            ← Retour aux candidatures
-          </Link>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="inline-flex rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white transition hover:bg-blue-700"
+            >
+              ← Retour
+            </button>
+
+            <Link
+              href="/"
+              className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-5 py-3 font-semibold text-slate-700 transition hover:bg-slate-100"
+            >
+              Aller à l&apos;accueil
+            </Link>
+          </div>
         </div>
       </main>
     );
@@ -540,12 +565,13 @@ export default function ApplicationDetailPage({
     <main className="min-h-screen bg-slate-100 p-4 md:p-6">
       <div className="mx-auto max-w-5xl">
         <div className="mb-6 flex items-center justify-between">
-          <Link
-            href="/"
+          <button
+            type="button"
+            onClick={() => router.back()}
             className="inline-flex items-center text-sm font-medium text-blue-700 transition hover:text-blue-900"
           >
-            ← Retour aux candidatures
-          </Link>
+            ← Retour
+          </button>
 
           {!isEditing && (
             <div className="flex gap-3">

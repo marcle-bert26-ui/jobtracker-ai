@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 type ProcessedEmail = {
@@ -21,6 +22,15 @@ type ProcessedEmail = {
 type EmailLogResponse = {
   total: number;
   items: ProcessedEmail[];
+};
+
+type QuickApplicationResult = {
+  application_id: number;
+  created: boolean;
+  company: string | null;
+  position: string | null;
+  location: string | null;
+  ai_used: boolean;
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -110,10 +120,15 @@ function formatDateTime(date: string | null) {
 }
 
 export default function EmailLogPage() {
+  const router = useRouter();
+
   const [entries, setEntries] = useState<ProcessedEmail[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const [creatingId, setCreatingId] = useState<number | null>(null);
+  const [creationError, setCreationError] = useState("");
 
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -224,6 +239,44 @@ export default function EmailLogPage() {
   const rangeStart = total === 0 ? 0 : page * PAGE_SIZE + 1;
   const rangeEnd = Math.min((page + 1) * PAGE_SIZE, total);
 
+  async function createApplicationFromEmail(emailId: number) {
+    try {
+      setCreatingId(emailId);
+      setCreationError("");
+
+      const response = await fetch(
+        `${API_URL}/emails/${emailId}/create-application`,
+        { method: "POST" }
+      );
+
+      if (!response.ok) {
+        let detail = "";
+
+        try {
+          const errorBody = await response.json();
+          detail = errorBody.detail || "";
+        } catch {
+          // Réponse non-JSON (ex : erreur serveur brute) — on garde le
+          // message générique ci-dessous.
+        }
+
+        throw new Error(
+          detail ||
+            `Impossible de créer la fiche à partir de cet email (HTTP ${response.status}).`
+        );
+      }
+
+      const result: QuickApplicationResult = await response.json();
+
+      router.push(`/applications/${result.application_id}?edit=1`);
+    } catch (err) {
+      setCreationError(
+        err instanceof Error ? err.message : "Une erreur est survenue."
+      );
+      setCreatingId(null);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-100 p-4 md:p-6">
       <div className="mx-auto max-w-5xl">
@@ -247,6 +300,9 @@ export default function EmailLogPage() {
                 ✉️ = clique pour rouvrir l&apos;email dans ta boîte mail
                 (Gmail/Outlook : lien direct — Yahoo : recherche
                 approchante par sujet, faute de lien direct fiable).
+                <br />
+                ➕ = crée rapidement une fiche à partir de cet email (IA
+                locale si disponible), à compléter ensuite.
               </span>
             </p>
 
@@ -369,6 +425,12 @@ export default function EmailLogPage() {
             </div>
           )}
 
+          {creationError && (
+            <div className="mx-6 mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              {creationError}
+            </div>
+          )}
+
           {!loading && !error && entries.length === 0 && (
             <div className="p-10 text-center text-slate-500">
               Aucun email {hasActiveFilters ? "ne correspond à ces filtres" : "pour le moment"}.
@@ -443,6 +505,22 @@ export default function EmailLogPage() {
                         >
                           Voir la fiche →
                         </Link>
+                      )}
+
+                      {!entry.application_id && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void createApplicationFromEmail(entry.id);
+                          }}
+                          disabled={creatingId === entry.id}
+                          className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {creatingId === entry.id
+                            ? "Création..."
+                            : "➕ Créer une fiche"}
+                        </button>
                       )}
                     </div>
                   </div>
