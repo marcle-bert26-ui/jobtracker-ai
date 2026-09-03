@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -102,16 +103,47 @@ function daysLabel(days: number) {
 }
 
 export default function RemindersPage() {
-  const [staleDays, setStaleDays] = useState(7);
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Filtres : vivent dans l'URL pour que revenir sur cette page (bouton
+  // retour, lien direct...) restaure exactement le seuil et la plage de
+  // dates actifs.
+  const [staleDays, setStaleDays] = useState(() => {
+    const raw = Number.parseInt(searchParams.get("stale_days") ?? "7", 10);
+    return Number.isFinite(raw) && raw > 0 ? raw : 7;
+  });
   const [customStaleDays, setCustomStaleDays] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [dateFrom, setDateFrom] = useState(
+    () => searchParams.get("from") ?? ""
+  );
+  const [dateTo, setDateTo] = useState(() => searchParams.get("to") ?? "");
 
   const [data, setData] = useState<RemindersResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [markingId, setMarkingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState("");
+
+  const isFirstFilterRun = useRef(true);
+  useEffect(() => {
+    if (isFirstFilterRun.current) {
+      isFirstFilterRun.current = false;
+      return;
+    }
+
+    const params = new URLSearchParams();
+
+    if (staleDays !== 7) params.set("stale_days", String(staleDays));
+    if (dateFrom) params.set("from", dateFrom);
+    if (dateTo) params.set("to", dateTo);
+
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, {
+      scroll: false,
+    });
+  }, [staleDays, dateFrom, dateTo, pathname, router]);
 
   async function loadReminders(days: number) {
     try {

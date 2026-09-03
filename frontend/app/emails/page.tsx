@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type ProcessedEmail = {
   id: number;
@@ -121,6 +121,8 @@ function formatDateTime(date: string | null) {
 
 export default function EmailLogPage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   const [entries, setEntries] = useState<ProcessedEmail[]>([]);
   const [total, setTotal] = useState(0);
@@ -130,14 +132,33 @@ export default function EmailLogPage() {
   const [creatingId, setCreatingId] = useState<number | null>(null);
   const [creationError, setCreationError] = useState("");
 
-  const [searchInput, setSearchInput] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [account, setAccount] = useState("");
-  const [eventType, setEventType] = useState("");
-  const [attachment, setAttachment] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [page, setPage] = useState(0);
+  // L'état des filtres vit dans l'URL (paramètres de requête) plutôt que
+  // seulement en mémoire : revenir sur cette page (bouton retour, lien
+  // direct...) restaure exactement la recherche/les filtres/la page
+  // actifs au lieu de repartir de zéro.
+  const [searchInput, setSearchInput] = useState(
+    () => searchParams.get("q") ?? ""
+  );
+  const [debouncedSearch, setDebouncedSearch] = useState(
+    () => searchParams.get("q") ?? ""
+  );
+  const [account, setAccount] = useState(
+    () => searchParams.get("account") ?? ""
+  );
+  const [eventType, setEventType] = useState(
+    () => searchParams.get("type") ?? ""
+  );
+  const [attachment, setAttachment] = useState(
+    () => searchParams.get("attached") ?? ""
+  );
+  const [dateFrom, setDateFrom] = useState(
+    () => searchParams.get("from") ?? ""
+  );
+  const [dateTo, setDateTo] = useState(() => searchParams.get("to") ?? "");
+  const [page, setPage] = useState(() => {
+    const rawPage = Number.parseInt(searchParams.get("page") ?? "0", 10);
+    return Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 0;
+  });
 
   // Recherche différée : on évite d'interroger l'API à chaque frappe.
   useEffect(() => {
@@ -148,11 +169,47 @@ export default function EmailLogPage() {
     return () => clearTimeout(timeout);
   }, [searchInput]);
 
-  // Tout changement de filtre revient à la première page.
+  // Tout changement de filtre (après le montage initial) revient à la
+  // première page. On ignore le tout premier passage pour ne pas écraser
+  // la page lue depuis l'URL au chargement.
+  const isFirstFilterRun = useRef(true);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset volontaire de la pagination à chaque changement de filtre
+    if (isFirstFilterRun.current) {
+      isFirstFilterRun.current = false;
+      return;
+    }
     setPage(0);
   }, [debouncedSearch, account, eventType, attachment, dateFrom, dateTo]);
+
+  // Répercute les filtres actifs dans l'URL (remplace l'entrée courante,
+  // sans empiler l'historique à chaque changement) : revenir sur cette
+  // page restaure ainsi exactement ce qui était affiché.
+  useEffect(() => {
+    const params = new URLSearchParams();
+
+    if (debouncedSearch) params.set("q", debouncedSearch);
+    if (account) params.set("account", account);
+    if (eventType) params.set("type", eventType);
+    if (attachment) params.set("attached", attachment);
+    if (dateFrom) params.set("from", dateFrom);
+    if (dateTo) params.set("to", dateTo);
+    if (page > 0) params.set("page", String(page));
+
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, {
+      scroll: false,
+    });
+  }, [
+    debouncedSearch,
+    account,
+    eventType,
+    attachment,
+    dateFrom,
+    dateTo,
+    page,
+    pathname,
+    router,
+  ]);
 
   useEffect(() => {
     async function loadLog() {

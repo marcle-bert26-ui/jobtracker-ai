@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 type Application = {
   id: number;
@@ -125,6 +126,10 @@ function getStatusStyle(status: string) {
 }
 
 export default function Home() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [applications, setApplications] = useState<Application[]>([]);
   const [form, setForm] = useState<ApplicationForm>(initialForm);
   const [loading, setLoading] = useState(true);
@@ -138,7 +143,30 @@ export default function Home() {
   );
   const [syncError, setSyncError] = useState("");
 
-  const [statusFilter, setStatusFilter] = useState<string>("Toutes");
+  // Filtre de statut : vit dans l'URL pour que revenir sur cette page
+  // (bouton retour, lien direct...) restaure le filtre actif.
+  const [statusFilter, setStatusFilter] = useState<string>(
+    () => searchParams.get("status") ?? "Toutes"
+  );
+
+  const isFirstStatusRun = useRef(true);
+  useEffect(() => {
+    if (isFirstStatusRun.current) {
+      isFirstStatusRun.current = false;
+      return;
+    }
+
+    const params = new URLSearchParams();
+
+    if (statusFilter && statusFilter !== "Toutes") {
+      params.set("status", statusFilter);
+    }
+
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, {
+      scroll: false,
+    });
+  }, [statusFilter, pathname, router]);
 
   const statusCounts = applications.reduce<Record<string, number>>(
     (counts, application) => {
