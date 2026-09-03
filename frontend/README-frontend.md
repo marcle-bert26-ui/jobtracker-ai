@@ -15,11 +15,14 @@ Ouvre [http://localhost:3000](http://localhost:3000). Le backend (`http://127.0.
 
 | Route | Fichier | Contenu |
 |---|---|---|
-| `/` | `app/page.tsx` | Liste des candidatures, création, déclenchement de la synchro emails |
-| `/applications/[id]` | `app/applications/[id]/page.tsx` | Détail, édition et historique d'une candidature |
-| `/emails` | `app/emails/page.tsx` | Journal des emails traités par la synchronisation |
+| `/` | `app/page.tsx` | Liste des candidatures (filtre de statut persisté dans l'URL), création, déclenchement de la synchro emails |
+| `/applications/[id]` | `app/applications/[id]/page.tsx` | Détail, édition et historique d'une candidature (`?edit=1` ouvre directement en mode édition) |
+| `/emails` | `app/emails/page.tsx` | Journal des emails : recherche, filtres (compte, type, rattachement, dates), pagination, création rapide de fiche depuis un email non rattaché |
+| `/reminders` | `app/reminders/page.tsx` | Candidatures à relancer (seuil configurable) et candidatures avec infos manquantes |
+| `/stats` | `app/stats/page.tsx` | Statistiques et graphiques sur les candidatures |
 
 ## Notes techniques
 
-- L'URL de l'API backend est codée en dur (`const API_URL = "http://127.0.0.1:8000"`) dans chaque page — à externaliser en variable d'environnement (`NEXT_PUBLIC_API_URL`) si le backend est déployé ailleurs qu'en local.
+- L'URL de l'API backend vient de `process.env.NEXT_PUBLIC_API_URL`, avec repli sur `http://127.0.0.1:8000` si la variable n'est pas définie — voir `frontend/.env.local` dans le README principal pour la configurer.
 - Style : Tailwind CSS v4.
+- **Filtres persistés dans l'URL** : sur `/`, `/emails` et `/reminders`, l'état des filtres (recherche, statut, plage de dates...) est répercuté dans les paramètres de requête de l'URL plutôt que gardé uniquement en mémoire. Ça permet au bouton "← Retour" (`router.back()`) sur la fiche candidature de restaurer exactement la page et les filtres actifs avant le clic, au lieu de repartir de zéro.

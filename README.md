@@ -8,8 +8,9 @@ Centraliser les candidatures, suivre les échanges avec les recruteurs et analys
 
 - Gérer les candidatures et leur avancement
 - Suivre l'historique des échanges avec les entreprises et recruteurs
-- Détecter automatiquement les emails liés à une candidature (confirmation, entretien, réponse positive/négative) et mettre à jour le suivi en conséquence
-- Garder l'utilisateur en contrôle : les emails sont importés en lecture seule, aucun envoi automatique n'est effectué
+- Détecter automatiquement les emails liés à une candidature (confirmation, entretien, réponse positive/négative), en extraire l'entreprise, le poste et la localisation, et mettre à jour le suivi en conséquence
+- Repérer les candidatures à relancer (aucune activité depuis un certain temps) ou incomplètes (infos manquantes)
+- Garder l'utilisateur en contrôle : les emails sont importés en lecture seule, aucun envoi automatique n'est effectué, et toute détection automatique reste éditable/complétable à la main
 
 Non encore implémenté (objectifs futurs) : préparation de CV adaptés et de lettres de motivation.
 
@@ -34,23 +35,27 @@ Non encore implémenté (objectifs futurs) : préparation de CV adaptés et de l
 jobtracker-ai/
 ├── backend/
 │   ├── main.py                  # Point d'entrée FastAPI
-│   ├── database.py               # Config SQLAlchemy / SQLite
+│   ├── database.py               # Config SQLAlchemy / SQLite + migrations légères
 │   ├── models.py                 # Application, InteractionHistory, ProcessedEmail, SyncState
 │   ├── schemas.py                 # Schémas Pydantic
-│   ├── graph_auth.py              # Auth Microsoft Graph (OAuth device flow)
-│   ├── authorize_outlook.py       # Script CLI pour autoriser un compte Outlook
+│   ├── graph_auth.py              # (inutilisé actuellement) plomberie Microsoft Graph, conservée au cas où
+│   ├── authorize_outlook.py       # (inutilisé actuellement) idem
 │   ├── routes/
 │   │   ├── applications.py        # CRUD des candidatures
 │   │   ├── history.py             # Historique des interactions par candidature
-│   │   └── emails.py              # Synchronisation et journal des emails
+│   │   ├── emails.py              # Synchronisation, journal des emails, création rapide de fiche
+│   │   └── reminders.py           # Candidatures à relancer / infos manquantes
 │   └── services/
-│       ├── email_sync.py          # Sync IMAP + Microsoft Graph, classification, matching
-│       └── ai_classifier.py       # Appel à Ollama pour classifier un email
+│       ├── email_sync.py          # Sync IMAP, classification, extraction, matching, commit incrémental
+│       ├── ai_classifier.py       # Appel à Ollama pour classifier un email
+│       └── reminders.py           # Calcul des candidatures à relancer / infos manquantes
 └── frontend/
     └── app/
         ├── page.tsx                        # Accueil : liste, création, synchro emails
         ├── applications/[id]/page.tsx      # Détail / édition d'une candidature
-        └── emails/page.tsx                 # Journal des emails traités
+        ├── emails/page.tsx                 # Journal des emails (recherche, filtres, création rapide de fiche)
+        ├── reminders/page.tsx              # Candidatures à relancer / infos manquantes
+        └── stats/page.tsx                  # Statistiques (graphiques)
 ```
 
 ## Installation
@@ -156,9 +161,11 @@ détection de l'entreprise fonctionne normalement sur les emails transférés.
 ## Fonctionnement de la synchronisation des emails
 
 1. Depuis l'interface (page d'accueil) ou via `POST /emails/sync`, l'app interroge chaque compte configuré (Outlook, Yahoo, Gmail).
-2. Chaque nouvel email est classifié (via Ollama si disponible, sinon via mots-clés FR/EN) en : `nouvelle_candidature`, `entretien`, `reponse_positive`, `reponse_negative`, `email_recu`, ou `ignore`.
-3. Si l'email correspond à une candidature existante (rapprochement par nom d'entreprise sur les 90 derniers jours), son statut et son historique sont mis à jour. Sinon, une nouvelle candidature peut être créée automatiquement (uniquement pour une confirmation de candidature).
-4. Tous les emails traités sont journalisés (`ProcessedEmail`) et consultables sur la page `/emails`.
+2. Chaque nouvel email est classifié (via Ollama si disponible, sinon via mots-clés FR/EN) en : `nouvelle_candidature`, `entretien`, `reponse_positive`, `reponse_negative`, `email_recu`, ou `ignore`. Un filet de sécurité promeut automatiquement en `nouvelle_candidature` tout email confirmant clairement une candidature (mentionne "candidature"/"postulé"/...) même s'il ne correspond à aucune formulation figée connue.
+3. L'entreprise, le poste et la localisation sont extraits (mots-clés + motifs de texte, ou IA si disponible).
+4. Si l'email correspond à une candidature existante (rapprochement par nom d'entreprise sur les 90 derniers jours), son statut et son historique sont mis à jour. Sinon, une nouvelle candidature peut être créée automatiquement (uniquement pour une confirmation de candidature).
+5. Chaque email traité est sauvegardé **immédiatement** (commit après chaque email, pas seulement à la fin) : une synchro interrompue ne fait pas perdre ce qui a déjà été traité, et peut reprendre là où elle s'est arrêtée sans retraiter les emails déjà vus.
+6. Tous les emails traités sont journalisés (`ProcessedEmail`) et consultables sur la page `/emails` — recherche texte, filtres (compte, type d'événement, rattachement, dates), pagination. Depuis un email non rattaché à une fiche (ignoré ou non), un bouton permet de créer rapidement une candidature à partir de cet email (avec une nouvelle tentative d'extraction via l'IA si elle est disponible à ce moment-là).
 
 ## API — endpoints principaux
 
@@ -169,7 +176,8 @@ détection de l'entreprise fonctionne normalement sur les emails transférés.
 | GET/POST | `/applications/{id}/history` | Historique des interactions |
 | DELETE | `/history/{id}` | Supprimer une entrée d'historique |
 | POST | `/emails/sync` | Lancer une synchronisation (params : `days`, `reset`) |
-| GET | `/emails/log` | Journal des emails traités |
+| GET | `/emails/log` | Journal des emails traités — recherche et filtres (`search`, `account`, `event_type`, `has_application`, `date_from`, `date_to`), pagination (`limit`, `offset`) |
+| POST | `/emails/{id}/create-application` | Créer/rattacher rapidement une fiche candidature à partir d'un email du journal |
 | GET | `/reminders` | Candidatures à relancer + infos manquantes (param : `stale_days`, défaut 7) |
 | GET | `/health` | Statut de l'API |
 
@@ -179,3 +187,6 @@ détection de l'entreprise fonctionne normalement sur les emails transférés.
 - [x] Variable d'environnement pour l'URL de l'API côté frontend
 - [ ] Préparation de CV adaptés et de lettres de motivation
 - [x] Rappels / relances (détection des candidatures sans réponse et des infos manquantes)
+- [x] Détection automatique de la localisation du poste dans les emails
+- [x] Journal des emails : recherche, filtres avancés, pagination, création rapide de fiche depuis un email
+- [x] Filtres de recherche/pagination persistés dans l'URL (le bouton retour restaure l'état exact de la page précédente)
