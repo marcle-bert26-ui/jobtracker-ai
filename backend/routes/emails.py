@@ -9,6 +9,9 @@ from database import SessionLocal
 from models import Application, InteractionHistory, ProcessedEmail
 from schemas import (
     AccountSyncResult,
+    BulkCreateItemResult,
+    BulkCreateRequest,
+    BulkCreateResponse,
     EmailLogResponse,
     QuickApplicationResult,
     SyncResult,
@@ -147,32 +150,16 @@ def get_email_log(
     return EmailLogResponse(total=total, items=items)
 
 
-@router.post(
-    "/{email_id}/create-application",
-    response_model=QuickApplicationResult,
-)
-def create_application_from_email(
-    email_id: int,
-    db: Session = Depends(get_db),
-):
+def _create_application_from_processed_email(
+    db: Session, processed_email: ProcessedEmail
+) -> QuickApplicationResult:
     """
-    Depuis une ligne du journal (typiquement un email ignoré ou non
-    rattaché), crée rapidement une fiche candidature à partir de ce que la
-    détection a déjà trouvé — en retentant une extraction (IA locale si
-    disponible, sinon les règles-clés) sur le sujet quand il manque encore
-    l'entreprise ou le poste. Le but n'est pas d'être parfait : juste de
-    démarrer la fiche pour que l'utilisateur la complète ensuite à la main.
-
-    Si une candidature existe déjà pour la même entreprise, l'email est
-    simplement rattaché à celle-ci plutôt que d'en créer une en double.
+    Logique partagée entre la création à l'unité (`POST
+    /emails/{id}/create-application`) et la création en lot (`POST
+    /emails/bulk-create-applications`). Commit à chaque appel : en cas
+    d'interruption au milieu d'un lot, ce qui a déjà été traité reste
+    enregistré.
     """
-    processed_email = (
-        db.query(ProcessedEmail).filter(ProcessedEmail.id == email_id).first()
-    )
-
-    if processed_email is None:
-        raise HTTPException(status_code=404, detail="Email introuvable.")
-
     if processed_email.application_id is not None:
         # Déjà rattaché à une fiche : on y renvoie plutôt que d'en créer
         # une en double.
@@ -278,3 +265,84 @@ def create_application_from_email(
         location=location,
         ai_used=ai_used,
     )
+
+
+@router.post(
+    "/{email_id}/create-application",
+    response_model=QuickApplicationResult,
+)
+def create_application_from_email(
+    email_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Depuis une ligne du journal (typiquement un email ignoré ou non
+    rattaché), crée rapidement une fiche candidature à partir de ce que la
+    détection a déjà trouvé — en retentant une extraction (IA locale si
+    disponible, sinon les règles-clés) sur le sujet quand il manque encore
+    l'entreprise ou le poste. Le but n'est pas d'être parfait : juste de
+    démarrer la fiche pour que l'utilisateur la complète ensuite à la main.
+
+    Si une candidature existe déjà pour la même entreprise, l'email est
+    simplement rattaché à celle-ci plutôt que d'en créer une en double.
+    """
+    processed_email = (
+        db.query(ProcessedEmail).filter(ProcessedEmail.id == email_id).first()
+    )
+
+    if processed_email is None:
+        raise HTTPException(status_code=404, detail="Email introuvable.")
+
+    return _create_application_from_processed_email(db, processed_email)
+
+
+@router.post(
+    "/bulk-create-applications",
+    response_model=BulkCreateResponse,
+)
+def bulk_create_applications(
+    payload: BulkCreateRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Même logique que `/emails/{id}/create-application`, mais pour
+    plusieurs emails sélectionnés d'un coup dans le journal. Chaque email
+    est traité indépendamment (une erreur sur l'un n'empêche pas les
+    suivants) et chaque succès est sauvegardé immédiatement.
+    """
+    results: list[BulkCreateItemResult] = []
+
+    for email_id in payload.email_ids:
+        processed_email = (
+            db.query(ProcessedEmail).filter(ProcessedEmail.id == email_id).first()
+        )
+
+        if processed_email is None:
+            results.append(
+                BulkCreateItemResult(
+                    email_id=email_id, success=False, error="Email introuvable."
+                )
+            )
+            continue
+
+        try:
+            quick_result = _create_application_from_processed_email(
+                db, processed_email
+            )
+            results.append(
+                BulkCreateItemResult(
+                    email_id=email_id,
+                    success=True,
+                    application_id=quick_result.application_id,
+                    created=quick_result.created,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - on veut isoler l'erreur par email
+            db.rollback()
+            results.append(
+                BulkCreateItemResult(
+                    email_id=email_id, success=False, error=str(exc)
+                )
+            )
+
+    return BulkCreateResponse(results=results)

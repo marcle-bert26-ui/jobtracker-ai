@@ -33,6 +33,18 @@ type QuickApplicationResult = {
   ai_used: boolean;
 };
 
+type BulkCreateItemResult = {
+  email_id: number;
+  success: boolean;
+  application_id: number | null;
+  created: boolean;
+  error: string | null;
+};
+
+type BulkCreateResponse = {
+  results: BulkCreateItemResult[];
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const PAGE_SIZE = 30;
@@ -131,6 +143,11 @@ export default function EmailLogPage() {
 
   const [creatingId, setCreatingId] = useState<number | null>(null);
   const [creationError, setCreationError] = useState("");
+
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkCreating, setBulkCreating] = useState(false);
+  const [bulkError, setBulkError] = useState("");
+  const [reloadToken, setReloadToken] = useState(0);
 
   // L'état des filtres vit dans l'URL (paramètres de requête) plutôt que
   // seulement en mémoire : revenir sur cette page (bouton retour, lien
@@ -259,6 +276,7 @@ export default function EmailLogPage() {
           setEntries(data.items ?? []);
           setTotal(data.total ?? 0);
         }
+        setSelectedIds(new Set());
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Une erreur est survenue."
@@ -269,7 +287,16 @@ export default function EmailLogPage() {
     }
 
     void loadLog();
-  }, [debouncedSearch, account, eventType, attachment, dateFrom, dateTo, page]);
+  }, [
+    debouncedSearch,
+    account,
+    eventType,
+    attachment,
+    dateFrom,
+    dateTo,
+    page,
+    reloadToken,
+  ]);
 
   const hasActiveFilters =
     debouncedSearch !== "" ||
@@ -331,6 +358,70 @@ export default function EmailLogPage() {
         err instanceof Error ? err.message : "Une erreur est survenue."
       );
       setCreatingId(null);
+    }
+  }
+
+  const selectableIds = entries
+    .filter((entry) => !entry.application_id)
+    .map((entry) => entry.id);
+
+  function toggleSelection(emailId: number) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(emailId)) {
+        next.delete(emailId);
+      } else {
+        next.add(emailId);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds((current) =>
+      current.size === selectableIds.length
+        ? new Set()
+        : new Set(selectableIds)
+    );
+  }
+
+  async function bulkCreateApplications() {
+    if (selectedIds.size === 0) return;
+
+    try {
+      setBulkCreating(true);
+      setBulkError("");
+
+      const response = await fetch(
+        `${API_URL}/emails/bulk-create-applications`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email_ids: Array.from(selectedIds) }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Impossible de traiter la sélection.");
+      }
+
+      const result: BulkCreateResponse = await response.json();
+      const failures = result.results.filter((item) => !item.success);
+
+      if (failures.length > 0) {
+        setBulkError(
+          `${failures.length} email(s) sur ${result.results.length} n'ont pas pu être traités.`
+        );
+      }
+
+      setSelectedIds(new Set());
+      setReloadToken((token) => token + 1);
+    } catch (err) {
+      setBulkError(
+        err instanceof Error ? err.message : "Une erreur est survenue."
+      );
+    } finally {
+      setBulkCreating(false);
     }
   }
 
@@ -488,6 +579,43 @@ export default function EmailLogPage() {
             </div>
           )}
 
+          {bulkError && (
+            <div className="mx-6 mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              {bulkError}
+            </div>
+          )}
+
+          {!loading && selectableIds.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-6 py-3 md:px-8">
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={
+                    selectedIds.size > 0 &&
+                    selectedIds.size === selectableIds.length
+                  }
+                  onChange={toggleSelectAll}
+                />
+                {selectedIds.size > 0
+                  ? `${selectedIds.size} sélectionné(s)`
+                  : `Tout sélectionner (${selectableIds.length} non rattaché(s))`}
+              </label>
+
+              {selectedIds.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void bulkCreateApplications()}
+                  disabled={bulkCreating}
+                  className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {bulkCreating
+                    ? "Création..."
+                    : `➕ Créer ${selectedIds.size} fiche(s)`}
+                </button>
+              )}
+            </div>
+          )}
+
           {!loading && !error && entries.length === 0 && (
             <div className="p-10 text-center text-slate-500">
               Aucun email {hasActiveFilters ? "ne correspond à ces filtres" : "pour le moment"}.
@@ -520,29 +648,41 @@ export default function EmailLogPage() {
                   }
                 >
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-slate-900">
-                        {entry.email_link && (
-                          <span className="mr-1.5" aria-hidden="true">
-                            ✉️
-                          </span>
-                        )}
-                        {entry.subject || "(sans objet)"}
-                      </p>
-
-                      <p className="mt-1 text-sm text-slate-500">
-                        {entry.sender} •{" "}
-                        {ACCOUNT_LABELS[entry.account] || entry.account} •{" "}
-                        {formatDateTime(entry.received_at)}
-                      </p>
-
-                      {(entry.company || entry.position || entry.location) && (
-                        <p className="mt-1 text-xs text-slate-400">
-                          {[entry.company, entry.position, entry.location]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </p>
+                    <div className="flex min-w-0 gap-3">
+                      {!entry.application_id && (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(entry.id)}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={() => toggleSelection(entry.id)}
+                          className="mt-1 shrink-0"
+                        />
                       )}
+
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-slate-900">
+                          {entry.email_link && (
+                            <span className="mr-1.5" aria-hidden="true">
+                              ✉️
+                            </span>
+                          )}
+                          {entry.subject || "(sans objet)"}
+                        </p>
+
+                        <p className="mt-1 text-sm text-slate-500">
+                          {entry.sender} •{" "}
+                          {ACCOUNT_LABELS[entry.account] || entry.account} •{" "}
+                          {formatDateTime(entry.received_at)}
+                        </p>
+
+                        {(entry.company || entry.position || entry.location) && (
+                          <p className="mt-1 text-xs text-slate-400">
+                            {[entry.company, entry.position, entry.location]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </p>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex shrink-0 items-center gap-2">

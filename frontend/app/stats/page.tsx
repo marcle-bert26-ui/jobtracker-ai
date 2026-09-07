@@ -29,6 +29,14 @@ type Application = {
 
 type Granularity = "week" | "month";
 
+type ResponseMetric = {
+  application_id: number;
+  company: string;
+  application_date: string | null;
+  first_response_date: string | null;
+  first_interview_date: string | null;
+};
+
 const STATUS_COLORS: Record<string, string> = {
   entretien: "#2563eb",
   envoy: "#64748b",
@@ -117,6 +125,7 @@ function bucketFor(dateString: string, granularity: Granularity, showYear: boole
 
 export default function StatsPage() {
   const [applications, setApplications] = useState<Application[]>([]);
+  const [responseMetrics, setResponseMetrics] = useState<ResponseMetric[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [granularity, setGranularity] = useState<Granularity>("month");
@@ -127,12 +136,23 @@ export default function StatsPage() {
       try {
         setLoading(true);
         setError(null);
-        const response = await fetch(`${API_URL}/applications`);
-        if (!response.ok) {
+        const [applicationsResponse, metricsResponse] = await Promise.all([
+          fetch(`${API_URL}/applications`),
+          fetch(`${API_URL}/applications/response-metrics`),
+        ]);
+        if (!applicationsResponse.ok) {
           throw new Error("Impossible de charger les candidatures.");
         }
-        const data = await response.json();
+        const data = await applicationsResponse.json();
         setApplications(data);
+
+        // Les métriques de délai/réponse ne sont pas bloquantes pour le
+        // reste de la page : si elles échouent, on affiche simplement le
+        // reste des statistiques sans cette section.
+        if (metricsResponse.ok) {
+          const metricsData = await metricsResponse.json();
+          setResponseMetrics(metricsData.items ?? []);
+        }
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Une erreur est survenue."
@@ -158,6 +178,84 @@ export default function StatsPage() {
     if (selectedYear === "all") return applications;
     return applications.filter((app) => getApplicationYear(app) === selectedYear);
   }, [applications, selectedYear]);
+
+  const filteredMetrics = useMemo(() => {
+    if (selectedYear === "all") return responseMetrics;
+    return responseMetrics.filter((metric) => {
+      if (!metric.application_date) return false;
+      const year = new Date(metric.application_date).getFullYear();
+      return !Number.isNaN(year) && year === selectedYear;
+    });
+  }, [responseMetrics, selectedYear]);
+
+  const responseStats = useMemo(() => {
+    const total = filteredMetrics.length;
+    const responded = filteredMetrics.filter(
+      (m) => m.first_response_date
+    ).length;
+    const withInterview = filteredMetrics.filter(
+      (m) => m.first_interview_date
+    ).length;
+
+    const daysBetween = (from: string, to: string) => {
+      const diff = new Date(to).getTime() - new Date(from).getTime();
+      return diff >= 0 ? diff / (1000 * 60 * 60 * 24) : null;
+    };
+
+    const responseDelays = filteredMetrics
+      .filter((m) => m.application_date && m.first_response_date)
+      .map((m) => daysBetween(m.application_date!, m.first_response_date!))
+      .filter((d): d is number => d !== null);
+
+    const interviewDelays = filteredMetrics
+      .filter((m) => m.application_date && m.first_interview_date)
+      .map((m) => daysBetween(m.application_date!, m.first_interview_date!))
+      .filter((d): d is number => d !== null);
+
+    const average = (values: number[]) =>
+      values.length
+        ? values.reduce((sum, v) => sum + v, 0) / values.length
+        : null;
+
+    return {
+      total,
+      responded,
+      withInterview,
+      responseRate: total ? (responded / total) * 100 : null,
+      interviewRate: total ? (withInterview / total) * 100 : null,
+      avgDaysToResponse: average(responseDelays),
+      avgDaysToInterview: average(interviewDelays),
+    };
+  }, [filteredMetrics]);
+
+  const companyResponseData = useMemo(() => {
+    const byCompany = new Map<
+      string,
+      { company: string; total: number; responded: number }
+    >();
+
+    for (const metric of filteredMetrics) {
+      const key = metric.company || "Entreprise inconnue";
+      const bucket = byCompany.get(key) ?? {
+        company: key,
+        total: 0,
+        responded: 0,
+      };
+      bucket.total += 1;
+      if (metric.first_response_date) bucket.responded += 1;
+      byCompany.set(key, bucket);
+    }
+
+    return Array.from(byCompany.values())
+      .map((bucket) => ({
+        ...bucket,
+        responseRate: (bucket.responded / bucket.total) * 100,
+      }))
+      // Entreprises avec au moins 2 candidatures d'abord (plus parlant
+      // qu'un taux de 100% sur une seule candidature), puis par volume.
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8);
+  }, [filteredMetrics]);
 
   const timeSeriesData = useMemo(() => {
     const buckets = new Map<string, { key: string; label: string; count: number }>();
@@ -284,6 +382,97 @@ export default function StatsPage() {
 
         {!loading && !error && applications.length > 0 && (
           <div className="grid gap-6">
+            {/* TAUX DE RÉPONSE ET DÉLAIS */}
+            {responseStats.total > 0 && (
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-lg font-bold text-slate-800">
+                  Taux de réponse et délais
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Basé sur l&apos;historique de chaque candidature
+                  {selectedYear === "all" ? "" : ` en ${selectedYear}`}.
+                </p>
+
+                <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="rounded-xl bg-slate-50 p-4">
+                    <p className="text-2xl font-bold text-slate-900">
+                      {responseStats.responseRate !== null
+                        ? `${responseStats.responseRate.toFixed(0)}%`
+                        : "—"}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Taux de réponse ({responseStats.responded}/
+                      {responseStats.total})
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-slate-50 p-4">
+                    <p className="text-2xl font-bold text-slate-900">
+                      {responseStats.interviewRate !== null
+                        ? `${responseStats.interviewRate.toFixed(0)}%`
+                        : "—"}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Taux d&apos;entretien ({responseStats.withInterview}/
+                      {responseStats.total})
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-slate-50 p-4">
+                    <p className="text-2xl font-bold text-slate-900">
+                      {responseStats.avgDaysToResponse !== null
+                        ? `${responseStats.avgDaysToResponse.toFixed(1)} j`
+                        : "—"}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Délai moyen avant réponse
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-slate-50 p-4">
+                    <p className="text-2xl font-bold text-slate-900">
+                      {responseStats.avgDaysToInterview !== null
+                        ? `${responseStats.avgDaysToInterview.toFixed(1)} j`
+                        : "—"}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Délai moyen avant entretien
+                    </p>
+                  </div>
+                </div>
+
+                {companyResponseData.length > 0 && (
+                  <div className="mt-6">
+                    <h3 className="text-sm font-semibold text-slate-700">
+                      Par entreprise (top 8 par volume)
+                    </h3>
+                    <div className="mt-2 space-y-2">
+                      {companyResponseData.map((row) => (
+                        <div
+                          key={row.company}
+                          className="flex items-center gap-3 text-sm"
+                        >
+                          <span className="w-32 shrink-0 truncate text-slate-600">
+                            {row.company}
+                          </span>
+                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                            <div
+                              className="h-full rounded-full bg-blue-500"
+                              style={{ width: `${row.responseRate}%` }}
+                            />
+                          </div>
+                          <span className="w-24 shrink-0 text-right text-xs text-slate-500">
+                            {row.responded}/{row.total} (
+                            {row.responseRate.toFixed(0)}%)
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
             {/* NOUVELLES CANDIDATURES DANS LE TEMPS */}
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

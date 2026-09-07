@@ -107,6 +107,37 @@ class RemindersResponse(BaseModel):
     missing_info: list[ReminderApplication]
 
 
+class ApplicationResponseMetric(BaseModel):
+    application_id: int
+    company: str
+    application_date: datetime | None = None
+    first_response_date: datetime | None = None
+    first_interview_date: datetime | None = None
+
+
+class ResponseMetricsResponse(BaseModel):
+    items: list[ApplicationResponseMetric]
+
+
+class DuplicateGroup(BaseModel):
+    key: str
+    applications: list[ApplicationResponse]
+
+
+class DuplicatesResponse(BaseModel):
+    groups: list[DuplicateGroup]
+
+
+class MergeRequest(BaseModel):
+    keep_id: int
+    merge_ids: list[int]
+
+
+class MergeResult(BaseModel):
+    kept_id: int
+    merged_count: int
+
+
 class QuickApplicationResult(BaseModel):
     application_id: int
     created: bool
@@ -114,6 +145,22 @@ class QuickApplicationResult(BaseModel):
     position: str | None = None
     location: str | None = None
     ai_used: bool = False
+
+
+class BulkCreateRequest(BaseModel):
+    email_ids: list[int]
+
+
+class BulkCreateItemResult(BaseModel):
+    email_id: int
+    success: bool
+    application_id: int | None = None
+    created: bool = False
+    error: str | None = None
+
+
+class BulkCreateResponse(BaseModel):
+    results: list[BulkCreateItemResult]
 
 
 class AccountSyncResult(BaseModel):

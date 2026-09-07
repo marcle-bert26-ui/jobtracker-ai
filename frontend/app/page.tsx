@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
+import KanbanBoard from "./components/KanbanBoard";
+
 type Application = {
   id: number;
   company: string;
@@ -149,6 +151,11 @@ export default function Home() {
     () => searchParams.get("status") ?? "Toutes"
   );
 
+  // Vue liste ou kanban : idem, persistée dans l'URL.
+  const [viewMode, setViewMode] = useState<"list" | "kanban">(
+    () => (searchParams.get("view") === "kanban" ? "kanban" : "list")
+  );
+
   const isFirstStatusRun = useRef(true);
   useEffect(() => {
     if (isFirstStatusRun.current) {
@@ -161,12 +168,15 @@ export default function Home() {
     if (statusFilter && statusFilter !== "Toutes") {
       params.set("status", statusFilter);
     }
+    if (viewMode === "kanban") {
+      params.set("view", "kanban");
+    }
 
     const query = params.toString();
     router.replace(query ? `${pathname}?${query}` : pathname, {
       scroll: false,
     });
-  }, [statusFilter, pathname, router]);
+  }, [statusFilter, viewMode, pathname, router]);
 
   const statusCounts = applications.reduce<Record<string, number>>(
     (counts, application) => {
@@ -184,6 +194,41 @@ export default function Home() {
       : applications.filter(
           (application) => application.status === statusFilter
         );
+
+  async function handleKanbanStatusChange(
+    applicationId: number,
+    newStatus: string
+  ) {
+    const previousApplications = applications;
+
+    // Mise à jour optimiste : la carte bouge immédiatement, avant même la
+    // réponse du serveur.
+    setApplications((current) =>
+      current.map((application) =>
+        application.id === applicationId
+          ? { ...application, status: newStatus }
+          : application
+      )
+    );
+
+    try {
+      const response = await fetch(`${API_URL}/applications/${applicationId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      if (!response.ok) {
+        throw new Error("La mise à jour du statut a échoué.");
+      }
+    } catch (err) {
+      // On annule la mise à jour optimiste si la sauvegarde a échoué.
+      setApplications(previousApplications);
+      setError(
+        err instanceof Error ? err.message : "Une erreur est survenue."
+      );
+    }
+  }
 
   async function handleSyncEmails() {
     await runSync(`${API_URL}/emails/sync`);
@@ -393,10 +438,24 @@ export default function Home() {
             </button>
 
             <Link
+              href="/kanban"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+            >
+              📌 Kanban
+            </Link>
+
+            <Link
               href="/reminders"
               className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
             >
               🔔 Rappels
+            </Link>
+
+            <Link
+              href="/duplicates"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+            >
+              🧹 Doublons
             </Link>
 
             <Link
@@ -819,36 +878,63 @@ export default function Home() {
                     Données enregistrées dans JobTracker
                   </p>
                 </div>
+
+                <div className="flex shrink-0 gap-1 rounded-lg border border-slate-300 bg-slate-100 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("list")}
+                    className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                      viewMode === "list"
+                        ? "bg-white text-slate-800 shadow-sm"
+                        : "text-slate-500 hover:text-slate-700"
+                    }`}
+                  >
+                    📋 Liste
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("kanban")}
+                    className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                      viewMode === "kanban"
+                        ? "bg-white text-slate-800 shadow-sm"
+                        : "text-slate-500 hover:text-slate-700"
+                    }`}
+                  >
+                    🗂️ Kanban
+                  </button>
+                </div>
               </div>
 
-              <div className="mt-4 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setStatusFilter("Toutes")}
-                  className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                    statusFilter === "Toutes"
-                      ? "bg-slate-800 text-white"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  }`}
-                >
-                  Toutes ({applications.length})
-                </button>
-
-                {availableStatuses.map((status) => (
+              {viewMode === "list" && (
+                <div className="mt-4 flex flex-wrap gap-2">
                   <button
-                    key={status}
                     type="button"
-                    onClick={() => setStatusFilter(status)}
+                    onClick={() => setStatusFilter("Toutes")}
                     className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                      statusFilter === status
+                      statusFilter === "Toutes"
                         ? "bg-slate-800 text-white"
                         : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                     }`}
                   >
-                    {status} ({statusCounts[status]})
+                    Toutes ({applications.length})
                   </button>
-                ))}
-              </div>
+
+                  {availableStatuses.map((status) => (
+                    <button
+                      key={status}
+                      type="button"
+                      onClick={() => setStatusFilter(status)}
+                      className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                        statusFilter === status
+                          ? "bg-slate-800 text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {status} ({statusCounts[status]})
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {loading && (
@@ -863,16 +949,27 @@ export default function Home() {
               </div>
             )}
 
-            {!loading &&
-              applications.length > 0 &&
-              filteredApplications.length === 0 && (
-                <div className="p-10 text-center text-slate-500">
-                  Aucune candidature avec ce statut.
-                </div>
-              )}
+            {!loading && applications.length > 0 && viewMode === "kanban" && (
+              <div className="p-4">
+                <KanbanBoard
+                  applications={applications}
+                  onStatusChange={handleKanbanStatusChange}
+                />
+              </div>
+            )}
 
-            {!loading &&
-              filteredApplications.map((application) => (
+            {viewMode === "list" && (
+              <>
+                {!loading &&
+                  applications.length > 0 &&
+                  filteredApplications.length === 0 && (
+                    <div className="p-10 text-center text-slate-500">
+                      Aucune candidature avec ce statut.
+                    </div>
+                  )}
+
+                {!loading &&
+                  filteredApplications.map((application) => (
                 <article
                   key={application.id}
                   className="border-b border-slate-200 px-7 py-6 last:border-b-0"
@@ -930,6 +1027,8 @@ export default function Home() {
                   </div>
                 </article>
               ))}
+              </>
+            )}
           </section>
         </div>
       </div>
