@@ -20,6 +20,7 @@ type ReminderApplication = {
   last_activity_date: string;
   days_since_last_activity: number;
   missing_fields: string[];
+  snoozed_until: string | null;
 };
 
 type RemindersResponse = {
@@ -33,6 +34,13 @@ const THRESHOLD_PRESETS = [
   { label: "3 jours", value: 3 },
   { label: "1 semaine", value: 7 },
   { label: "2 semaines", value: 14 },
+];
+
+const SNOOZE_OPTIONS = [
+  { label: "3 jours", days: 3 },
+  { label: "1 semaine", days: 7 },
+  { label: "2 semaines", days: 14 },
+  { label: "1 mois", days: 30 },
 ];
 
 function formatDate(date: string | null) {
@@ -253,6 +261,42 @@ export default function RemindersPage() {
     }
   }
 
+  const [snoozingId, setSnoozingId] = useState<number | null>(null);
+  const [openSnoozeMenuId, setOpenSnoozeMenuId] = useState<number | null>(
+    null
+  );
+
+  async function snoozeApplication(applicationId: number, days: number) {
+    try {
+      setSnoozingId(applicationId);
+      setActionError("");
+      setOpenSnoozeMenuId(null);
+
+      const response = await fetch(
+        `${API_URL}/applications/${applicationId}/snooze`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ days }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Impossible de reporter cette candidature.");
+      }
+
+      await loadReminders(staleDays);
+    } catch (err) {
+      setActionError(
+        err instanceof Error
+          ? err.message
+          : "Une erreur est survenue lors du report."
+      );
+    } finally {
+      setSnoozingId(null);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-100 p-4 md:p-6">
       <div className="mx-auto max-w-[1200px]">
@@ -468,6 +512,40 @@ export default function RemindersPage() {
                           ? "..."
                           : "✓ Marquer relancé"}
                       </button>
+
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setOpenSnoozeMenuId((current) =>
+                              current === entry.id ? null : entry.id
+                            )
+                          }
+                          disabled={snoozingId === entry.id}
+                          className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {snoozingId === entry.id
+                            ? "..."
+                            : "⏰ Reporter"}
+                        </button>
+
+                        {openSnoozeMenuId === entry.id && (
+                          <div className="absolute right-0 z-10 mt-1 w-40 rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                            {SNOOZE_OPTIONS.map((option) => (
+                              <button
+                                key={option.days}
+                                type="button"
+                                onClick={() =>
+                                  snoozeApplication(entry.id, option.days)
+                                }
+                                className="block w-full px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100"
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
 
                       <Link
                         href={`/applications/${entry.id}`}

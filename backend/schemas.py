@@ -20,9 +20,14 @@ class ApplicationCreate(BaseModel):
 class ApplicationResponse(ApplicationCreate):
     id: int
     created_at: datetime
+    snoozed_until: datetime | None = None
 
     class Config:
         from_attributes = True
+
+
+class SnoozeRequest(BaseModel):
+    days: int
 
 
 class ApplicationUpdate(BaseModel):
@@ -95,6 +100,7 @@ class ReminderApplication(BaseModel):
     last_activity_date: datetime
     days_since_last_activity: int
     missing_fields: list[str]
+    snoozed_until: datetime | None = None
 
     class Config:
         from_attributes = True

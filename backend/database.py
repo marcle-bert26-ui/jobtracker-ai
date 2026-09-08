@@ -68,3 +68,16 @@ def run_lightweight_migrations():
                     "ALTER TABLE interaction_history ADD COLUMN email_link VARCHAR(1000)"
                 )
             )
+
+    if "applications" not in inspector.get_table_names():
+        return
+
+    application_columns = {
+        col["name"] for col in inspector.get_columns("applications")
+    }
+
+    if "snoozed_until" not in application_columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE applications ADD COLUMN snoozed_until DATETIME")
+            )

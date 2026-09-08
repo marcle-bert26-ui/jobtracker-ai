@@ -71,6 +71,14 @@ class Application(Base):
         nullable=True,
     )
 
+    # Report ("snooze") : tant que cette date n'est pas passée, la
+    # candidature est exclue de la liste "à relancer" sur /reminders,
+    # même si elle dépasse le seuil de jours sans activité.
+    snoozed_until: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,

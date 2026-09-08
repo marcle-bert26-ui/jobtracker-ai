@@ -178,6 +178,8 @@ détection de l'entreprise fonctionne normalement sur les emails transférés.
 |---|---|---|
 | GET/POST | `/applications` | Lister / créer des candidatures |
 | GET/PUT/DELETE | `/applications/{id}` | Détail / modification / suppression |
+| GET | `/applications/export` | Export CSV de toutes les candidatures (backup/partage) |
+| POST/DELETE | `/applications/{id}/snooze` | Reporter / annuler le report du rappel de relance (`{days: N}`) |
 | GET | `/applications/duplicates` | Candidatures potentiellement en double (groupées par entreprise) |
 | POST | `/applications/merge` | Fusionner des candidatures en double dans une seule |
 | GET | `/applications/response-metrics` | Dates de première réponse/entretien par candidature (utilisé pour les stats) |
@@ -205,3 +207,5 @@ détection de l'entreprise fonctionne normalement sur les emails transférés.
 - [x] Vue kanban (glisser-déposer par statut)
 - [x] Statistiques avancées : taux de réponse, délais moyens avant réponse/entretien, par entreprise
 - [x] Correction des extractions IA depuis le journal, réinjectée comme exemples pour les prochaines synchros
+- [x] Report ("snooze") d'un rappel de relance sur une candidature précise
+- [x] Export CSV de toutes les candidatures (backup/partage)

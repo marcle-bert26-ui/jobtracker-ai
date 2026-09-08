@@ -444,6 +444,14 @@ export default function Home() {
               📌 Kanban
             </Link>
 
+            <a
+              href={`${API_URL}/applications/export`}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              title="Télécharger toutes les candidatures au format CSV (Excel, Google Sheets...)"
+            >
+              ⬇️ Exporter (CSV)
+            </a>
+
             <Link
               href="/reminders"
               className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"

@@ -1,6 +1,9 @@
+import csv
+import io
 import re
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
@@ -14,6 +17,7 @@ from schemas import (
     MergeRequest,
     MergeResult,
     ResponseMetricsResponse,
+    SnoozeRequest,
 )
 from services.stats import compute_response_metrics
 
@@ -196,6 +200,58 @@ def get_applications(
     ).all()
 
 
+_EXPORT_COLUMNS = [
+    ("company", "Entreprise"),
+    ("position", "Poste"),
+    ("location", "Localisation"),
+    ("status", "Statut"),
+    ("application_date", "Date de candidature"),
+    ("source", "Source"),
+    ("job_url", "Lien de l'offre"),
+    ("recruiter", "Recruteur"),
+    ("recruiter_email", "Email du recruteur"),
+    ("salary", "Salaire"),
+    ("notes", "Notes"),
+    ("created_at", "Créée le"),
+]
+
+
+@router.get("/export")
+def export_applications(db: Session = Depends(get_db)):
+    """
+    Exporte toutes les candidatures au format CSV (compatible Excel/Google
+    Sheets), pour sauvegarde ou partage — tout est en local dans ce projet,
+    sans sauvegarde cloud automatique.
+    """
+    applications = db.query(Application).order_by(
+        Application.created_at.desc()
+    ).all()
+
+    buffer = io.StringIO()
+    # BOM UTF-8 : sans lui, Excel sous Windows affiche mal les accents.
+    buffer.write("\ufeff")
+
+    writer = csv.writer(buffer, delimiter=";")
+    writer.writerow([label for _, label in _EXPORT_COLUMNS])
+
+    for application in applications:
+        row = []
+        for field, _ in _EXPORT_COLUMNS:
+            value = getattr(application, field)
+            if isinstance(value, datetime):
+                value = value.strftime("%d/%m/%Y")
+            row.append(value if value is not None else "")
+        writer.writerow(row)
+
+    filename = f"candidatures_{datetime.utcnow().strftime('%Y-%m-%d')}.csv"
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get(
     "/{application_id}",
     response_model=ApplicationResponse,
@@ -267,3 +323,62 @@ def delete_application(
 
     db.delete(application)
     db.commit()
+
+
+@router.post(
+    "/{application_id}/snooze",
+    response_model=ApplicationResponse,
+)
+def snooze_application(
+    application_id: int,
+    payload: SnoozeRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Reporte le rappel de relance de cette candidature : tant que
+    `snoozed_until` n'est pas passé, elle n'apparaît plus dans "à
+    relancer" sur /reminders, même si elle dépasse le seuil de jours sans
+    activité. N'affecte que les rappels — le statut et le reste de la
+    fiche ne changent pas.
+    """
+    if payload.days <= 0:
+        raise HTTPException(
+            status_code=400, detail="Le nombre de jours doit être positif."
+        )
+
+    application = db.query(Application).filter(
+        Application.id == application_id
+    ).first()
+
+    if application is None:
+        raise HTTPException(status_code=404, detail="Candidature introuvable")
+
+    application.snoozed_until = datetime.utcnow() + timedelta(days=payload.days)
+    db.commit()
+    db.refresh(application)
+
+    return application
+
+
+@router.delete(
+    "/{application_id}/snooze",
+    response_model=ApplicationResponse,
+)
+def unsnooze_application(
+    application_id: int,
+    db: Session = Depends(get_db),
+):
+    """Annule un report en cours, pour que la candidature réapparaisse
+    immédiatement dans les rappels si elle y est éligible."""
+    application = db.query(Application).filter(
+        Application.id == application_id
+    ).first()
+
+    if application is None:
+        raise HTTPException(status_code=404, detail="Candidature introuvable")
+
+    application.snoozed_until = None
+    db.commit()
+    db.refresh(application)
+
+    return application

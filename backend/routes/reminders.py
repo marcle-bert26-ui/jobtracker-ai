@@ -76,6 +76,7 @@ def get_reminders(
             entry
             for entry in entries
             if entry["days_since_last_activity"] >= stale_days
+            and (entry["snoozed_until"] is None or entry["snoozed_until"] <= now)
         ),
         key=lambda entry: entry["days_since_last_activity"],
         reverse=True,

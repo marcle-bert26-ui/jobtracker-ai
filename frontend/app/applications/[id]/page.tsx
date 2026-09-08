@@ -18,6 +18,7 @@ type Application = {
   salary: string | null;
   notes: string | null;
   created_at: string;
+  snoozed_until: string | null;
 };
 
 type ApplicationForm = {
@@ -250,6 +251,24 @@ export default function ApplicationDetailPage({
       );
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function cancelSnooze() {
+    try {
+      const response = await fetch(`${API_URL}/applications/${id}/snooze`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error("Impossible d'annuler le report.");
+      }
+
+      const data: Application = await response.json();
+      setApplication(data);
+    } catch {
+      // Pas de blocage de l'UI pour un échec sur cette action secondaire —
+      // le badge reste affiché, l'utilisateur peut réessayer.
     }
   }
 
@@ -875,6 +894,24 @@ export default function ApplicationDetailPage({
                 >
                   {application.status}
                 </span>
+
+                {application.snoozed_until &&
+                  new Date(application.snoozed_until) > new Date() && (
+                    <span className="inline-flex w-fit items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-medium text-amber-800">
+                      ⏰ Relance reportée au{" "}
+                      {new Date(application.snoozed_until).toLocaleDateString(
+                        "fr-FR",
+                        { day: "numeric", month: "short" }
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void cancelSnooze()}
+                        className="font-semibold underline hover:text-amber-900"
+                      >
+                        Annuler
+                      </button>
+                    </span>
+                  )}
               </div>
             </div>
 

@@ -80,4 +80,5 @@ def build_reminder_entry(application: Application, now: datetime) -> dict:
         "last_activity_date": last_activity_date,
         "days_since_last_activity": max(days_since, 0),
         "missing_fields": compute_missing_fields(application),
+        "snoozed_until": application.snoozed_until,
     }

@@ -45,7 +45,7 @@ backend/
 
 ## Modèles de données (`models.py`)
 
-- **`Application`** — une candidature (entreprise, poste, localisation, statut, recruteur, etc.), avec sa liste d'`InteractionHistory`.
+- **`Application`** — une candidature (entreprise, poste, localisation, statut, recruteur, etc.), avec sa liste d'`InteractionHistory`. Le champ `snoozed_until`, quand renseigné, exclut la candidature de la liste "à relancer" de `/reminders` jusqu'à cette date (sans toucher au reste de la fiche).
 - **`InteractionHistory`** — un événement lié à une candidature (candidature envoyée, relance, réponse reçue, entretien, note...), avec un lien optionnel (`email_link`) vers l'email d'origine quand l'entrée vient d'une détection automatique.
 - **`ProcessedEmail`** — trace de chaque email déjà traité par la sync (déduplication via `message_id`), avec l'entreprise/poste/localisation extraits, un lien optionnel vers une `Application`, et un lien pour rouvrir l'email dans la boîte mail. Rien n'est jamais purgé : tout reste consultable via `/emails/log`.
 - **`SyncState`** — dernière date de synchronisation par compte, pour ne relire que les nouveaux emails à chaque appel.
@@ -93,6 +93,8 @@ L'extraction (mots-clés comme IA) n'est pas parfaite — en particulier sur des
 | GET | `/health` | Statut de l'API |
 | GET/POST | `/applications` | Lister / créer des candidatures |
 | GET/PUT/DELETE | `/applications/{id}` | Détail / modification / suppression |
+| GET | `/applications/export` | Export CSV de toutes les candidatures (`;` comme séparateur, BOM UTF-8 pour Excel) |
+| POST/DELETE | `/applications/{id}/snooze` | Reporter (`{"days": N}`) / annuler le report du rappel de relance |
 | GET | `/applications/duplicates` | Candidatures potentiellement en double, groupées par entreprise |
 | POST | `/applications/merge` | Fusionner des candidatures en double dans une seule |
 | GET | `/applications/response-metrics` | Dates de première réponse/entretien par candidature |
