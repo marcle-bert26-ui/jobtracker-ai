@@ -31,13 +31,15 @@ backend/
 ├── graph_auth.py               # (inutilisé actuellement) plomberie Microsoft Graph (OAuth device flow), conservée au cas où un compte Graph serait reconnecté un jour
 ├── authorize_outlook.py        # (inutilisé actuellement) idem
 ├── routes/
-│   ├── applications.py         # CRUD candidatures
+│   ├── applications.py         # CRUD candidatures, doublons/fusion, statistiques de réponse
 │   ├── history.py              # Historique des interactions
-│   ├── emails.py               # Sync, journal des emails (recherche/filtres/pagination), création rapide de fiche
+│   ├── emails.py               # Sync, journal des emails (recherche/filtres/pagination), création rapide/en lot de fiches, correction d'extraction
 │   └── reminders.py            # Candidatures à relancer / infos manquantes
 └── services/
     ├── email_sync.py            # Cœur de la sync : IMAP (Outlook/Yahoo/Gmail), classification, extraction, rapprochement
     ├── ai_classifier.py         # Appel à Ollama pour classifier un email (repli sur mots-clés géré dans email_sync.py)
+    ├── corrections.py           # Mémorisation des corrections utilisateur + exemples réinjectés dans le prompt IA
+    ├── stats.py                  # Dates de première réponse/entretien par candidature (délais, taux de réponse)
     └── reminders.py             # Calcul des candidatures à relancer / infos manquantes
 ```
 
@@ -47,6 +49,7 @@ backend/
 - **`InteractionHistory`** — un événement lié à une candidature (candidature envoyée, relance, réponse reçue, entretien, note...), avec un lien optionnel (`email_link`) vers l'email d'origine quand l'entrée vient d'une détection automatique.
 - **`ProcessedEmail`** — trace de chaque email déjà traité par la sync (déduplication via `message_id`), avec l'entreprise/poste/localisation extraits, un lien optionnel vers une `Application`, et un lien pour rouvrir l'email dans la boîte mail. Rien n'est jamais purgé : tout reste consultable via `/emails/log`.
 - **`SyncState`** — dernière date de synchronisation par compte, pour ne relire que les nouveaux emails à chaque appel.
+- **`ExtractionCorrection`** — corrections apportées à la main (entreprise/poste/localisation) sur ce que la détection avait trouvé pour un email. Sert d'exemples réinjectés dans le prompt IA pour améliorer les extractions suivantes (voir `services/corrections.py`).
 
 ## Authentification des comptes email
 
@@ -73,7 +76,15 @@ Tous les comptes passent par **IMAP** avec mot de passe d'application (aucun flu
 
 Le paramètre `reset=true` sur `POST /emails/sync` supprime l'historique de sync et les emails journalisés pour le(s) compte(s) concerné(s), pour forcer un rebalayage complet — sans jamais toucher aux candidatures déjà créées (manuellement ou automatiquement).
 
-Depuis le journal des emails (`GET /emails/log`), tout email non rattaché à une fiche peut être transformé en candidature via `POST /emails/{id}/create-application` : réutilise ce qui a déjà été extrait, retente l'extraction (IA si disponible à ce moment-là) si l'entreprise ou le poste manquent encore, et rattache à une candidature existante plutôt que de créer un doublon si l'entreprise correspond déjà à une fiche récente.
+Depuis le journal des emails (`GET /emails/log`), tout email non rattaché à une fiche peut être transformé en candidature via `POST /emails/{id}/create-application` (ou en lot via `POST /emails/bulk-create-applications`) : réutilise ce qui a déjà été extrait, retente l'extraction (IA si disponible à ce moment-là) si l'entreprise ou le poste manquent encore, et rattache à une candidature existante plutôt que de créer un doublon si l'entreprise correspond déjà à une fiche récente.
+
+### Corriger et améliorer l'extraction (`POST /emails/{id}/correct`)
+
+L'extraction (mots-clés comme IA) n'est pas parfaite — en particulier sur des plateformes comme LinkedIn ou Indeed, où le nom de l'expéditeur (la plateforme) n'est pas celui de l'entreprise qui recrute. Quand un email a une entreprise, un poste ou une localisation erronés :
+
+1. La correction est appliquée immédiatement à l'email dans le journal, et répercutée sur la candidature liée si elle n'a pas déjà divergé (ex : modifiée différemment à la main entre-temps).
+2. Elle est mémorisée dans `ExtractionCorrection`.
+3. Les corrections les plus récentes (`services/corrections.py`, 6 par défaut) sont réinjectées comme exemples concrets dans le prompt système envoyé à Ollama à chaque appel de `classify_with_ai` — pas de ré-entraînement, juste de l'apprentissage en contexte, qui aide l'IA à généraliser le raisonnement ("préférer l'entreprise mentionnée dans le texte à celle de la plateforme") plutôt qu'à mémoriser un cas précis.
 
 ## Endpoints
 
@@ -82,11 +93,16 @@ Depuis le journal des emails (`GET /emails/log`), tout email non rattaché à un
 | GET | `/health` | Statut de l'API |
 | GET/POST | `/applications` | Lister / créer des candidatures |
 | GET/PUT/DELETE | `/applications/{id}` | Détail / modification / suppression |
+| GET | `/applications/duplicates` | Candidatures potentiellement en double, groupées par entreprise |
+| POST | `/applications/merge` | Fusionner des candidatures en double dans une seule |
+| GET | `/applications/response-metrics` | Dates de première réponse/entretien par candidature |
 | GET/POST | `/applications/{id}/history` | Historique des interactions |
 | DELETE | `/history/{id}` | Supprimer une entrée d'historique |
 | POST | `/emails/sync` | Lancer une synchronisation (`days`, `reset` en query params) |
 | GET | `/emails/log` | Journal des emails traités — recherche et filtres (`search`, `account`, `event_type`, `has_application`, `date_from`, `date_to`), pagination (`limit`, `offset`) |
 | POST | `/emails/{id}/create-application` | Créer/rattacher rapidement une fiche candidature à partir d'un email du journal |
+| POST | `/emails/bulk-create-applications` | Idem, pour plusieurs emails sélectionnés d'un coup (`email_ids: [...]`) |
+| POST | `/emails/{id}/correct` | Corriger l'entreprise/le poste/la localisation détectés (alimente l'IA pour les prochaines synchros) |
 | GET | `/reminders` | Candidatures à relancer + infos manquantes (param : `stale_days`, défaut 7) |
 
 ## Points d'attention

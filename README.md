@@ -36,26 +36,30 @@ jobtracker-ai/
 ├── backend/
 │   ├── main.py                  # Point d'entrée FastAPI
 │   ├── database.py               # Config SQLAlchemy / SQLite + migrations légères
-│   ├── models.py                 # Application, InteractionHistory, ProcessedEmail, SyncState
+│   ├── models.py                 # Application, InteractionHistory, ProcessedEmail, SyncState, ExtractionCorrection
 │   ├── schemas.py                 # Schémas Pydantic
 │   ├── graph_auth.py              # (inutilisé actuellement) plomberie Microsoft Graph, conservée au cas où
 │   ├── authorize_outlook.py       # (inutilisé actuellement) idem
 │   ├── routes/
-│   │   ├── applications.py        # CRUD des candidatures
+│   │   ├── applications.py        # CRUD, doublons/fusion, stats de réponse
 │   │   ├── history.py             # Historique des interactions par candidature
-│   │   ├── emails.py              # Synchronisation, journal des emails, création rapide de fiche
+│   │   ├── emails.py              # Synchronisation, journal des emails, création rapide/en lot de fiches, correction d'extraction
 │   │   └── reminders.py           # Candidatures à relancer / infos manquantes
 │   └── services/
 │       ├── email_sync.py          # Sync IMAP, classification, extraction, matching, commit incrémental
 │       ├── ai_classifier.py       # Appel à Ollama pour classifier un email
+│       ├── corrections.py         # Mémorisation des corrections d'extraction + exemples pour l'IA
+│       ├── stats.py                # Délais/taux de réponse par candidature
 │       └── reminders.py           # Calcul des candidatures à relancer / infos manquantes
 └── frontend/
     └── app/
-        ├── page.tsx                        # Accueil : liste, création, synchro emails
-        ├── applications/[id]/page.tsx      # Détail / édition d'une candidature
-        ├── emails/page.tsx                 # Journal des emails (recherche, filtres, création rapide de fiche)
+        ├── page.tsx                        # Accueil : liste, création, synchro emails, filtre de statut
+        ├── applications/[id]/page.tsx      # Détail / édition d'une candidature (`?edit=1` = édition directe)
+        ├── emails/page.tsx                 # Journal des emails (recherche, filtres, création rapide/en lot, correction)
         ├── reminders/page.tsx              # Candidatures à relancer / infos manquantes
-        └── stats/page.tsx                  # Statistiques (graphiques)
+        ├── duplicates/page.tsx             # Détection et fusion de candidatures en double
+        ├── kanban/page.tsx                  # Vue kanban (glisser-déposer par statut)
+        └── stats/page.tsx                  # Statistiques (graphiques, taux de réponse, délais)
 ```
 
 ## Installation
@@ -165,7 +169,8 @@ détection de l'entreprise fonctionne normalement sur les emails transférés.
 3. L'entreprise, le poste et la localisation sont extraits (mots-clés + motifs de texte, ou IA si disponible).
 4. Si l'email correspond à une candidature existante (rapprochement par nom d'entreprise sur les 90 derniers jours), son statut et son historique sont mis à jour. Sinon, une nouvelle candidature peut être créée automatiquement (uniquement pour une confirmation de candidature).
 5. Chaque email traité est sauvegardé **immédiatement** (commit après chaque email, pas seulement à la fin) : une synchro interrompue ne fait pas perdre ce qui a déjà été traité, et peut reprendre là où elle s'est arrêtée sans retraiter les emails déjà vus.
-6. Tous les emails traités sont journalisés (`ProcessedEmail`) et consultables sur la page `/emails` — recherche texte, filtres (compte, type d'événement, rattachement, dates), pagination. Depuis un email non rattaché à une fiche (ignoré ou non), un bouton permet de créer rapidement une candidature à partir de cet email (avec une nouvelle tentative d'extraction via l'IA si elle est disponible à ce moment-là).
+6. Tous les emails traités sont journalisés (`ProcessedEmail`) et consultables sur la page `/emails` — recherche texte, filtres (compte, type d'événement, rattachement, dates), pagination, sélection multiple pour créer plusieurs fiches d'un coup. Depuis un email non rattaché à une fiche (ignoré ou non), un bouton permet de créer rapidement une candidature à partir de cet email (avec une nouvelle tentative d'extraction via l'IA si elle est disponible à ce moment-là).
+7. Si l'entreprise, le poste ou la localisation détectés sont faux, ils peuvent être corrigés directement depuis le journal (bouton "✏️ Corriger"). Ces corrections sont mémorisées et réinjectées comme exemples dans le prompt de l'IA lors des synchros suivantes, pour l'aider à éviter la même erreur sur des emails similaires (pas de ré-entraînement — de l'apprentissage en contexte).
 
 ## API — endpoints principaux
 
@@ -173,11 +178,16 @@ détection de l'entreprise fonctionne normalement sur les emails transférés.
 |---|---|---|
 | GET/POST | `/applications` | Lister / créer des candidatures |
 | GET/PUT/DELETE | `/applications/{id}` | Détail / modification / suppression |
+| GET | `/applications/duplicates` | Candidatures potentiellement en double (groupées par entreprise) |
+| POST | `/applications/merge` | Fusionner des candidatures en double dans une seule |
+| GET | `/applications/response-metrics` | Dates de première réponse/entretien par candidature (utilisé pour les stats) |
 | GET/POST | `/applications/{id}/history` | Historique des interactions |
 | DELETE | `/history/{id}` | Supprimer une entrée d'historique |
 | POST | `/emails/sync` | Lancer une synchronisation (params : `days`, `reset`) |
 | GET | `/emails/log` | Journal des emails traités — recherche et filtres (`search`, `account`, `event_type`, `has_application`, `date_from`, `date_to`), pagination (`limit`, `offset`) |
 | POST | `/emails/{id}/create-application` | Créer/rattacher rapidement une fiche candidature à partir d'un email du journal |
+| POST | `/emails/bulk-create-applications` | Idem, pour plusieurs emails sélectionnés d'un coup |
+| POST | `/emails/{id}/correct` | Corriger l'entreprise/le poste/la localisation détectés (alimente l'IA pour les prochaines synchros) |
 | GET | `/reminders` | Candidatures à relancer + infos manquantes (param : `stale_days`, défaut 7) |
 | GET | `/health` | Statut de l'API |
 
@@ -190,3 +200,8 @@ détection de l'entreprise fonctionne normalement sur les emails transférés.
 - [x] Détection automatique de la localisation du poste dans les emails
 - [x] Journal des emails : recherche, filtres avancés, pagination, création rapide de fiche depuis un email
 - [x] Filtres de recherche/pagination persistés dans l'URL (le bouton retour restaure l'état exact de la page précédente)
+- [x] Détection de doublons de candidatures + fusion
+- [x] Actions groupées dans le journal des emails (créer plusieurs fiches d'un coup)
+- [x] Vue kanban (glisser-déposer par statut)
+- [x] Statistiques avancées : taux de réponse, délais moyens avant réponse/entretien, par entreprise
+- [x] Correction des extractions IA depuis le journal, réinjectée comme exemples pour les prochaines synchros

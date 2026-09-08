@@ -24,6 +24,13 @@ type EmailLogResponse = {
   items: ProcessedEmail[];
 };
 
+type CorrectionResponse = {
+  email_id: number;
+  company: string | null;
+  position: string | null;
+  location: string | null;
+  application_updated: boolean;
+};
 type QuickApplicationResult = {
   application_id: number;
   created: boolean;
@@ -148,6 +155,15 @@ export default function EmailLogPage() {
   const [bulkCreating, setBulkCreating] = useState(false);
   const [bulkError, setBulkError] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
+
+  const [correctingId, setCorrectingId] = useState<number | null>(null);
+  const [correctionForm, setCorrectionForm] = useState({
+    company: "",
+    position: "",
+    location: "",
+  });
+  const [correctionSaving, setCorrectionSaving] = useState(false);
+  const [correctionRowError, setCorrectionRowError] = useState("");
 
   // L'état des filtres vit dans l'URL (paramètres de requête) plutôt que
   // seulement en mémoire : revenir sur cette page (bouton retour, lien
@@ -425,6 +441,64 @@ export default function EmailLogPage() {
     }
   }
 
+  function startCorrecting(entry: ProcessedEmail) {
+    setCorrectingId(entry.id);
+    setCorrectionRowError("");
+    setCorrectionForm({
+      company: entry.company || "",
+      position: entry.position || "",
+      location: entry.location || "",
+    });
+  }
+
+  function cancelCorrecting() {
+    setCorrectingId(null);
+    setCorrectionRowError("");
+  }
+
+  async function saveCorrection(emailId: number) {
+    try {
+      setCorrectionSaving(true);
+      setCorrectionRowError("");
+
+      const response = await fetch(`${API_URL}/emails/${emailId}/correct`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company: correctionForm.company.trim() || null,
+          position: correctionForm.position.trim() || null,
+          location: correctionForm.location.trim() || null,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Impossible d'enregistrer la correction.");
+      }
+
+      const result: CorrectionResponse = await response.json();
+
+      setEntries((current) =>
+        current.map((entry) =>
+          entry.id === emailId
+            ? {
+                ...entry,
+                company: result.company,
+                position: result.position,
+                location: result.location,
+              }
+            : entry
+        )
+      );
+      setCorrectingId(null);
+    } catch (err) {
+      setCorrectionRowError(
+        err instanceof Error ? err.message : "Une erreur est survenue."
+      );
+    } finally {
+      setCorrectionSaving(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-100 p-4 md:p-6">
       <div className="mx-auto max-w-5xl">
@@ -451,6 +525,10 @@ export default function EmailLogPage() {
                 <br />
                 ➕ = crée rapidement une fiche à partir de cet email (IA
                 locale si disponible), à compléter ensuite.
+                <br />
+                ✏️ = corrige l&apos;entreprise/le poste/la localisation
+                détectés — la correction aide aussi l&apos;IA à mieux
+                détecter les prochains emails similaires.
               </span>
             </p>
 
@@ -682,6 +760,81 @@ export default function EmailLogPage() {
                               .join(" · ")}
                           </p>
                         )}
+
+                        {correctingId === entry.id && (
+                          <div
+                            onClick={(event) => event.stopPropagation()}
+                            className="mt-3 space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-3"
+                          >
+                            <div className="grid gap-2 sm:grid-cols-3">
+                              <input
+                                type="text"
+                                value={correctionForm.company}
+                                onChange={(event) =>
+                                  setCorrectionForm((current) => ({
+                                    ...current,
+                                    company: event.target.value,
+                                  }))
+                                }
+                                placeholder="Entreprise"
+                                className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                              />
+                              <input
+                                type="text"
+                                value={correctionForm.position}
+                                onChange={(event) =>
+                                  setCorrectionForm((current) => ({
+                                    ...current,
+                                    position: event.target.value,
+                                  }))
+                                }
+                                placeholder="Poste"
+                                className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                              />
+                              <input
+                                type="text"
+                                value={correctionForm.location}
+                                onChange={(event) =>
+                                  setCorrectionForm((current) => ({
+                                    ...current,
+                                    location: event.target.value,
+                                  }))
+                                }
+                                placeholder="Localisation"
+                                className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                              />
+                            </div>
+
+                            {correctionRowError && (
+                              <p className="text-xs text-red-600">
+                                {correctionRowError}
+                              </p>
+                            )}
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void saveCorrection(entry.id)}
+                                disabled={correctionSaving}
+                                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                              >
+                                {correctionSaving
+                                  ? "Enregistrement..."
+                                  : "✓ Enregistrer"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={cancelCorrecting}
+                                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+                              >
+                                Annuler
+                              </button>
+                              <span className="text-xs text-slate-400">
+                                Sert aussi à mieux détecter les prochains emails.
+                              </span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -719,6 +872,21 @@ export default function EmailLogPage() {
                             : "➕ Créer une fiche"}
                         </button>
                       )}
+
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (correctingId === entry.id) {
+                            cancelCorrecting();
+                          } else {
+                            startCorrecting(entry);
+                          }
+                        }}
+                        className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+                      >
+                        {correctingId === entry.id ? "✕ Fermer" : "✏️ Corriger"}
+                      </button>
                     </div>
                   </div>
                 </li>

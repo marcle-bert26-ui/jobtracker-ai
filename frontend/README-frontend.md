@@ -17,12 +17,15 @@ Ouvre [http://localhost:3000](http://localhost:3000). Le backend (`http://127.0.
 |---|---|---|
 | `/` | `app/page.tsx` | Liste des candidatures (filtre de statut persisté dans l'URL), création, déclenchement de la synchro emails |
 | `/applications/[id]` | `app/applications/[id]/page.tsx` | Détail, édition et historique d'une candidature (`?edit=1` ouvre directement en mode édition) |
-| `/emails` | `app/emails/page.tsx` | Journal des emails : recherche, filtres (compte, type, rattachement, dates), pagination, création rapide de fiche depuis un email non rattaché |
+| `/emails` | `app/emails/page.tsx` | Journal des emails : recherche, filtres (compte, type, rattachement, dates), pagination, création rapide/en lot de fiche(s), correction des extractions erronées |
 | `/reminders` | `app/reminders/page.tsx` | Candidatures à relancer (seuil configurable) et candidatures avec infos manquantes |
-| `/stats` | `app/stats/page.tsx` | Statistiques et graphiques sur les candidatures |
+| `/duplicates` | `app/duplicates/page.tsx` | Détection de candidatures potentiellement en double (groupées par entreprise) et fusion |
+| `/kanban` | `app/kanban/page.tsx` | Vue kanban : une colonne par statut, glisser-déposer une carte pour changer le statut de la candidature |
+| `/stats` | `app/stats/page.tsx` | Statistiques et graphiques sur les candidatures, dont taux de réponse/entretien et délais moyens |
 
 ## Notes techniques
 
 - L'URL de l'API backend vient de `process.env.NEXT_PUBLIC_API_URL`, avec repli sur `http://127.0.0.1:8000` si la variable n'est pas définie — voir `frontend/.env.local` dans le README principal pour la configurer.
 - Style : Tailwind CSS v4.
 - **Filtres persistés dans l'URL** : sur `/`, `/emails` et `/reminders`, l'état des filtres (recherche, statut, plage de dates...) est répercuté dans les paramètres de requête de l'URL plutôt que gardé uniquement en mémoire. Ça permet au bouton "← Retour" (`router.back()`) sur la fiche candidature de restaurer exactement la page et les filtres actifs avant le clic, au lieu de repartir de zéro.
+- **Kanban** (`/kanban`) : glisser-déposer implémenté avec l'API HTML5 Drag and Drop native du navigateur, sans dépendance ajoutée. Mise à jour optimiste du statut à l'écran, annulée automatiquement si la sauvegarde côté API échoue.

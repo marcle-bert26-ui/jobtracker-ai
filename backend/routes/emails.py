@@ -12,11 +12,14 @@ from schemas import (
     BulkCreateItemResult,
     BulkCreateRequest,
     BulkCreateResponse,
+    CorrectionRequest,
+    CorrectionResponse,
     EmailLogResponse,
     QuickApplicationResult,
     SyncResult,
 )
 from services.ai_classifier import classify_with_ai, is_available as ai_is_available
+from services.corrections import get_recent_correction_examples, record_correction
 from services.email_sync import (
     extract_company,
     extract_position,
@@ -181,7 +184,10 @@ def _create_application_from_processed_email(
 
         if ai_is_available():
             ai_used = True
-            ai_result = classify_with_ai(subject, processed_email.sender, "", "")
+            correction_examples = get_recent_correction_examples(db)
+            ai_result = classify_with_ai(
+                subject, processed_email.sender, "", "", correction_examples
+            )
 
             if ai_result:
                 company = company or (ai_result.get("company") or "").strip() or None
@@ -346,3 +352,91 @@ def bulk_create_applications(
             )
 
     return BulkCreateResponse(results=results)
+
+
+@router.post(
+    "/{email_id}/correct",
+    response_model=CorrectionResponse,
+)
+def correct_email_extraction(
+    email_id: int,
+    payload: CorrectionRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Corrige l'entreprise, le poste et/ou la localisation détectés pour un
+    email du journal. La correction est :
+    1. appliquée immédiatement à cet email (et à la candidature liée, si
+       elle existe et n'a pas déjà été modifiée différemment depuis) ;
+    2. mémorisée comme exemple pour aider l'IA à mieux extraire ces
+       informations sur les emails suivants (voir services/corrections.py).
+    """
+    processed_email = (
+        db.query(ProcessedEmail).filter(ProcessedEmail.id == email_id).first()
+    )
+
+    if processed_email is None:
+        raise HTTPException(status_code=404, detail="Email introuvable.")
+
+    if payload.company is None and payload.position is None and payload.location is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Indique au moins un champ corrigé (entreprise, poste ou localisation).",
+        )
+
+    original_company = processed_email.company
+    original_position = processed_email.position
+    original_location = processed_email.location
+
+    record_correction(
+        db,
+        sender=processed_email.sender,
+        subject=processed_email.subject,
+        original_company=original_company,
+        original_position=original_position,
+        original_location=original_location,
+        corrected_company=payload.company if payload.company is not None else original_company,
+        corrected_position=payload.position if payload.position is not None else original_position,
+        corrected_location=payload.location if payload.location is not None else original_location,
+    )
+
+    if payload.company is not None:
+        processed_email.company = payload.company
+    if payload.position is not None:
+        processed_email.position = payload.position
+    if payload.location is not None:
+        processed_email.location = payload.location
+
+    application_updated = False
+
+    if processed_email.application_id is not None:
+        application = (
+            db.query(Application)
+            .filter(Application.id == processed_email.application_id)
+            .first()
+        )
+
+        if application is not None:
+            # On ne répercute sur la fiche que les champs qui n'ont pas
+            # déjà divergé de la valeur détectée à l'origine — pour ne
+            # jamais écraser une correction manuelle différente faite
+            # directement sur la fiche entre-temps.
+            if payload.company is not None and application.company == original_company:
+                application.company = payload.company
+                application_updated = True
+            if payload.position is not None and application.position == original_position:
+                application.position = payload.position
+                application_updated = True
+            if payload.location is not None and application.location == original_location:
+                application.location = payload.location
+                application_updated = True
+
+    db.commit()
+
+    return CorrectionResponse(
+        email_id=processed_email.id,
+        company=processed_email.company,
+        position=processed_email.position,
+        location=processed_email.location,
+        application_updated=application_updated,
+    )

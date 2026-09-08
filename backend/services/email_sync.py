@@ -12,6 +12,7 @@ import requests
 from graph_auth import get_access_token
 from models import Application, InteractionHistory, ProcessedEmail, SyncState
 from services.ai_classifier import classify_with_ai, is_available as ai_is_available
+from services.corrections import get_recent_correction_examples
 
 # --------------------------------------------------------------------------
 # CONFIGURATION DES COMPTES
@@ -167,6 +168,11 @@ COMPANY_TEXT_PATTERNS = [
         r"équipe de recrutement de\s+([^\.\n]{2,60}?)(?:[\.\n]|$)",
         re.IGNORECASE,
     ),
+    # "WEPLACE recrute un Responsable Technique..." (offres LinkedIn)
+    re.compile(
+        r"^([^\.,\n]{2,60}?)\s+recrute\s+(?:un|une|des)\s",
+        re.IGNORECASE,
+    ),
 ]
 
 # Mots trop génériques pour être un nom d'entreprise valable — si une
@@ -295,6 +301,13 @@ def extract_company(sender_email, sender_name, subject="", body=""):
     if from_text:
         return from_text
 
+    if domain and is_generic:
+        # Le nom de l'expéditeur sur ces plateformes est le nom de la
+        # plateforme elle-même (ex : "LinkedIn", "Indeed") — jamais celui
+        # de l'entreprise qui recrute. Mieux vaut ne rien renvoyer que de
+        # se tromper d'entreprise.
+        return None
+
     if sender_name:
         cleaned = re.sub(
             r"\b(rh|recrutement|recruiting|talent|careers?|hr|team|no-?reply)\b",
@@ -304,18 +317,60 @@ def extract_company(sender_email, sender_name, subject="", body=""):
         ).strip(" -|,")
         return cleaned or sender_name
 
-    return "Entreprise inconnue"
+    return None
 
 
-def extract_position(subject):
-    cleaned = re.sub(r"^(re|fwd|tr)\s*:\s*", "", subject, flags=re.IGNORECASE)
-    cleaned = re.sub(
-        r"(votre candidature (pour|au poste de)|application for|your application for)",
+def extract_position(subject: str) -> str | None:
+    text = re.sub(r"^(re|fwd|tr)\s*:\s*", "", subject, flags=re.IGNORECASE).strip()
+
+    # Ces formulations confirment une candidature (ou une simple
+    # notification) sans jamais mentionner d'intitulé de poste dans le
+    # sujet — impossible d'en extraire un poste fiable, autant ne rien
+    # renvoyer plutôt qu'un fragment trompeur (ex : le nom de l'entreprise).
+    no_position_patterns = [
+        r"votre candidature (a (?:bien )?été envoyée|est arrivée)\s+(à|chez)\s+.+",
+        r".+\s+vous remercie\s+d['\u2019]avoir postulé",
+        r"^\d+\s+recruteurs?\s+",
+        r"code de validation",
+        r"vient de consulter votre cv",
+    ]
+    for pattern in no_position_patterns:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            return None
+
+    # "WEPLACE recrute un Responsable Technique..." (LinkedIn) : le poste
+    # est ce qui suit "recrute un/une/des".
+    match = re.search(r"\brecrute\s+(?:un|une|des)\s+(.+)", text, flags=re.IGNORECASE)
+    if match:
+        text = match.group(1)
+
+    # Préfixe "Prénom, " en tête de sujet (ex : "Marc, Hellowork a trouvé...").
+    text = re.sub(r"^[^\s,]{2,20},\s*", "", text)
+
+    # "Candidature: Chargé amélioration continue" (préfixe simple, sans
+    # "pour" derrière — les ATS l'utilisent souvent comme intitulé brut).
+    text = re.sub(r"^candidature\s*[:\-–]\s*", "", text, flags=re.IGNORECASE)
+
+    text = re.sub(
+        r"(votre candidature (pour le poste de|pour ce poste|pour le poste|pour|au poste de)|"
+        r"candidature (pour le poste de|pour ce poste|pour le poste|pour)|"
+        r"application for( the position of)?|your application for)\s*",
         "",
-        cleaned,
+        text,
         flags=re.IGNORECASE,
-    ).strip(" -–:")
-    return cleaned[:200] if cleaned else "Poste non précisé"
+    ).strip(" -–:,")
+
+    if not text:
+        return None
+
+    lowered = text.lower()
+    if "candidature" in lowered or "recrute" in lowered:
+        # On n'a probablement isolé qu'un fragment sans intitulé de poste
+        # exploitable (souvent un nom d'entreprise) — mieux vaut ne rien
+        # renvoyer qu'un texte trompeur.
+        return None
+
+    return text[:200]
 
 
 EVENT_TYPE_LABELS = {
@@ -407,13 +462,17 @@ def _guard_new_application(event_type, full_text):
     return "email_recu"
 
 
-def _classify(subject, sender_email, sender_name, body):
+def _classify(subject, sender_email, sender_name, body, correction_examples=None):
     """
     Retourne (event_type, company, position, location).
     Essaie d'abord l'IA locale (Ollama) si disponible, sinon se rabat
     sur les règles-clés. Sans IA, la localisation n'est pas détectable
     de façon fiable (pas de mot-clé ni de domaine qui l'indique) : elle
     vaut toujours None dans ce cas et reste à compléter manuellement.
+
+    `correction_examples` (optionnel) : corrections passées par
+    l'utilisateur, réinjectées dans le prompt IA (voir
+    services/corrections.py). Sans effet sur le repli mots-clés.
     """
     full_text = f"{subject}\n{body}"
 
@@ -435,7 +494,9 @@ def _classify(subject, sender_email, sender_name, body):
         return "ignore", None, None, None
 
     if ai_is_available():
-        ai_result = classify_with_ai(subject, sender_email, sender_name, body)
+        ai_result = classify_with_ai(
+            subject, sender_email, sender_name, body, correction_examples
+        )
 
         if ai_result is not None:
             event_type = ai_result.get("event_type", "ignore")
@@ -505,7 +566,7 @@ def build_email_link(account_key, message_id, subject, graph_weblink=None):
 
 def _process_message(db, account_key, message_id, subject, sender_email,
                       sender_name, body, received_at, result,
-                      graph_weblink=None):
+                      graph_weblink=None, correction_examples=None):
     """
     Logique de classification + création/mise à jour partagée entre
     IMAP et Microsoft Graph. Modifie `result` en place.
@@ -522,7 +583,7 @@ def _process_message(db, account_key, message_id, subject, sender_email,
     result["scanned"] += 1
 
     event_type, company, position_hint, location = _classify(
-        subject, sender_email, sender_name, body
+        subject, sender_email, sender_name, body, correction_examples
     )
 
     email_link = build_email_link(
@@ -669,7 +730,10 @@ def _get_email_body_imap(msg):
     return plain_text
 
 
-def sync_account_imap(db, account_key, config, result, days=None, reset=False):
+def sync_account_imap(
+    db, account_key, config, result, days=None, reset=False,
+    correction_examples=None,
+):
     address = os.getenv(config["email_env"])
     password = os.getenv(config["password_env"])
 
@@ -753,6 +817,7 @@ def sync_account_imap(db, account_key, config, result, days=None, reset=False):
             _process_message(
                 db, account_key, message_id, subject, sender_email,
                 sender_name, body, received_at, result,
+                correction_examples=correction_examples,
             )
 
             # Sauvegarde immédiate : si la synchro est interrompue plus
@@ -781,7 +846,10 @@ def sync_account_imap(db, account_key, config, result, days=None, reset=False):
 # SYNCHRONISATION MICROSOFT GRAPH (Outlook perso / scolaire, via OAuth)
 # --------------------------------------------------------------------------
 
-def sync_account_graph(db, account_key, result, days=None, reset=False):
+def sync_account_graph(
+    db, account_key, result, days=None, reset=False,
+    correction_examples=None,
+):
     token = get_access_token(account_key)
 
     if not token:
@@ -879,6 +947,7 @@ def sync_account_graph(db, account_key, result, days=None, reset=False):
                     db, account_key, message_id, subject, sender_email,
                     sender_name, body, received_at, result,
                     graph_weblink=message.get("webLink"),
+                    correction_examples=correction_examples,
                 )
 
                 # Sauvegarde immédiate : si la synchro est interrompue plus
@@ -906,7 +975,7 @@ def sync_account_graph(db, account_key, result, days=None, reset=False):
 # POINT D'ENTRÉE
 # --------------------------------------------------------------------------
 
-def sync_account(db, account_key, days=None, reset=False):
+def sync_account(db, account_key, days=None, reset=False, correction_examples=None):
     config = ACCOUNTS[account_key]
 
     result = {
@@ -920,13 +989,27 @@ def sync_account(db, account_key, days=None, reset=False):
     }
 
     if config["protocol"] == "graph":
-        return sync_account_graph(db, account_key, result, days=days, reset=reset)
+        return sync_account_graph(
+            db, account_key, result, days=days, reset=reset,
+            correction_examples=correction_examples,
+        )
 
-    return sync_account_imap(db, account_key, config, result, days=days, reset=reset)
+    return sync_account_imap(
+        db, account_key, config, result, days=days, reset=reset,
+        correction_examples=correction_examples,
+    )
 
 
 def sync_all_accounts(db, days=None, reset=False):
+    # Récupérées une seule fois pour toute la synchro (et non par email) :
+    # ces exemples ne changent pas pendant qu'un scan est en cours, inutile
+    # de refaire la requête à chaque email.
+    correction_examples = get_recent_correction_examples(db)
+
     return [
-        sync_account(db, account_key, days=days, reset=reset)
+        sync_account(
+            db, account_key, days=days, reset=reset,
+            correction_examples=correction_examples,
+        )
         for account_key in ACCOUNTS
     ]

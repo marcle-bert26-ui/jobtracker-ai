@@ -237,3 +237,46 @@ class SyncState(Base):
         DateTime,
         nullable=True,
     )
+
+
+class ExtractionCorrection(Base):
+    """
+    Correction apportée à la main par l'utilisateur sur ce que la
+    détection (IA ou mots-clés) avait trouvé pour un email — entreprise,
+    poste et/ou localisation. Sert de mémoire d'exemples réels réinjectés
+    dans le prompt de l'IA pour l'aider à mieux extraire ces informations
+    sur les emails suivants (pas de ré-entraînement, juste des exemples en
+    contexte).
+    """
+
+    __tablename__ = "extraction_corrections"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    sender: Mapped[str] = mapped_column(
+        String(320),
+        nullable=False,
+    )
+
+    subject: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    original_company: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    original_position: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    original_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    corrected_company: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    corrected_position: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    corrected_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )

@@ -138,6 +138,20 @@ class MergeResult(BaseModel):
     merged_count: int
 
 
+class CorrectionRequest(BaseModel):
+    company: str | None = None
+    position: str | None = None
+    location: str | None = None
+
+
+class CorrectionResponse(BaseModel):
+    email_id: int
+    company: str | None = None
+    position: str | None = None
+    location: str | None = None
+    application_updated: bool = False
+
+
 class QuickApplicationResult(BaseModel):
     application_id: int
     created: bool

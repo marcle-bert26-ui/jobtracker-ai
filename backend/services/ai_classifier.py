@@ -67,12 +67,55 @@ def is_available() -> bool:
         return False
 
 
-def classify_with_ai(subject, sender_email, sender_name, body):
+def _build_correction_examples_text(correction_examples):
+    if not correction_examples:
+        return ""
+
+    lines = [
+        "\n\nExemples de corrections faites par l'utilisateur sur des emails "
+        "précédents (sers-toi du raisonnement derrière ces corrections — "
+        "ex : préférer le nom de l'entreprise mentionné dans le texte "
+        "plutôt que celui de la plateforme d'emploi — plutôt que d'attendre "
+        "un sujet identique, qui ne se reproduira pas) :"
+    ]
+
+    has_example = False
+    for example in correction_examples:
+        subject = (example.get("subject") or "").strip()
+        if not subject:
+            continue
+
+        parts = []
+        if example.get("company"):
+            parts.append(f'entreprise correcte = "{example["company"]}"')
+        if example.get("position"):
+            parts.append(f'poste correct = "{example["position"]}"')
+        if example.get("location"):
+            parts.append(f'localisation correcte = "{example["location"]}"')
+
+        if not parts:
+            continue
+
+        has_example = True
+        lines.append(f"- Sujet « {subject} » → " + ", ".join(parts) + ".")
+
+    return "\n".join(lines) if has_example else ""
+
+
+def classify_with_ai(subject, sender_email, sender_name, body, correction_examples=None):
     """
     Retourne un dict {is_job_related, event_type, company, position}
     ou None si Ollama n'est pas disponible / la réponse est invalide
     (l'appelant se rabat alors sur les règles-clés).
+
+    `correction_examples` (optionnel) : corrections passées faites par
+    l'utilisateur (voir services/corrections.py), réinjectées dans le
+    prompt pour aider l'IA à éviter les mêmes erreurs d'extraction.
     """
+    system_prompt = SYSTEM_PROMPT + _build_correction_examples_text(
+        correction_examples
+    )
+
     # Les emails de plateformes (LinkedIn, HelloWork...) commencent souvent
     # par du texte de navigation/menu sans intérêt avant le vrai contenu —
     # on laisse une marge large pour ne pas couper l'info utile.
@@ -90,7 +133,7 @@ def classify_with_ai(subject, sender_email, sender_name, body):
             json={
                 "model": OLLAMA_MODEL,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ],
                 "format": "json",
