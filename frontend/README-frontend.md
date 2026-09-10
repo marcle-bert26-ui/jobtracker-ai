@@ -22,6 +22,8 @@ Ouvre [http://localhost:3000](http://localhost:3000). Le backend (`http://127.0.
 | `/duplicates` | `app/duplicates/page.tsx` | Détection de candidatures potentiellement en double (groupées par entreprise) et fusion |
 | `/kanban` | `app/kanban/page.tsx` | Vue kanban : une colonne par statut, glisser-déposer une carte pour changer le statut de la candidature |
 | `/stats` | `app/stats/page.tsx` | Statistiques et graphiques sur les candidatures, dont taux de réponse/entretien et délais moyens |
+| `/profile` | `app/profile/page.tsx` | Import (`.pdf`/`.docx`) et édition du CV, base de toutes les générations de documents |
+| `/spontaneous` | `app/spontaneous/page.tsx` | Candidature spontanée : suggestions d'entreprises + génération d'un message adapté |
 
 ## Notes techniques
 
@@ -31,3 +33,4 @@ Ouvre [http://localhost:3000](http://localhost:3000). Le backend (`http://127.0.
 - **Kanban** (`/kanban`) : glisser-déposer implémenté avec l'API HTML5 Drag and Drop native du navigateur, sans dépendance ajoutée. Mise à jour optimiste du statut à l'écran, annulée automatiquement si la sauvegarde côté API échoue.
 - **Export CSV** : le bouton "⬇️ Exporter (CSV)" de l'accueil est un simple lien `<a>` vers `GET /applications/export` (le backend renvoie le fichier avec les en-têtes de téléchargement, pas besoin de logique côté frontend).
 - **Report ("snooze")** : sur `/reminders`, le bouton "⏰ Reporter" propose 3j/1sem/2sem/1mois ; la candidature reportée disparaît de "à relancer" jusqu'à la date choisie. Un badge sur la fiche candidature (`/applications/[id]`) indique le report en cours et permet de l'annuler.
+- **Génération de documents (CV, lettres)** : les boutons de génération font un `fetch` POST vers le backend, récupèrent la réponse en `blob()`, puis déclenchent le téléchargement via un lien `<a download>` créé dynamiquement (`URL.createObjectURL`) — nécessaire ici car le fichier vient d'une requête POST (pas un simple lien direct comme pour l'export CSV en GET).

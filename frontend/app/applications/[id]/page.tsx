@@ -212,6 +212,10 @@ export default function ApplicationDetailPage({
   const [deleting, setDeleting] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
+  const [generatingLetter, setGeneratingLetter] = useState(false);
+  const [generatingCv, setGeneratingCv] = useState(false);
+  const [generationError, setGenerationError] = useState("");
+
   // --- Historique ---
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -269,6 +273,60 @@ export default function ApplicationDetailPage({
     } catch {
       // Pas de blocage de l'UI pour un échec sur cette action secondaire —
       // le badge reste affiché, l'utilisateur peut réessayer.
+    }
+  }
+
+  async function generateDocument(
+    kind: "generate-cover-letter" | "generate-cv"
+  ) {
+    const setLoadingState =
+      kind === "generate-cover-letter" ? setGeneratingLetter : setGeneratingCv;
+
+    try {
+      setLoadingState(true);
+      setGenerationError("");
+
+      const response = await fetch(
+        `${API_URL}/applications/${id}/${kind}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }
+      );
+
+      if (!response.ok) {
+        let detail = "";
+        try {
+          const body = await response.json();
+          detail = body.detail || "";
+        } catch {
+          // ignore
+        }
+        throw new Error(
+          detail ||
+            (kind === "generate-cover-letter"
+              ? "Impossible de générer la lettre de motivation."
+              : "Impossible de générer le CV.")
+        );
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download =
+        kind === "generate-cover-letter" ? "lettre-motivation.pdf" : "cv.pdf";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setGenerationError(
+        err instanceof Error ? err.message : "Une erreur est survenue."
+      );
+    } finally {
+      setLoadingState(false);
     }
   }
 
@@ -593,7 +651,25 @@ export default function ApplicationDetailPage({
           </button>
 
           {!isEditing && (
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => void generateDocument("generate-cover-letter")}
+                disabled={generatingLetter}
+                className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {generatingLetter ? "Génération..." : "📄 Lettre de motivation"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void generateDocument("generate-cv")}
+                disabled={generatingCv}
+                className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {generatingCv ? "Génération..." : "📋 CV adapté"}
+              </button>
+
               <button
                 type="button"
                 onClick={startEditing}
@@ -612,6 +688,12 @@ export default function ApplicationDetailPage({
             </div>
           )}
         </div>
+
+        {generationError && (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {generationError}
+          </div>
+        )}
 
         {/* CONFIRMATION DE SUPPRESSION */}
         {confirmingDelete && (

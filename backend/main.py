@@ -12,8 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import Base, engine, run_lightweight_migrations
 from routes.applications import router as applications_router
+from routes.documents import router as documents_router
 from routes.emails import router as emails_router
 from routes.history import router as history_router
+from routes.profile import router as profile_router
 from routes.reminders import router as reminders_router
 
 import models
@@ -52,3 +54,5 @@ app.include_router(applications_router)
 app.include_router(history_router)
 app.include_router(emails_router)
 app.include_router(reminders_router)
+app.include_router(profile_router)
+app.include_router(documents_router)

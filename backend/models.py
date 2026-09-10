@@ -288,3 +288,29 @@ class ExtractionCorrection(Base):
         default=datetime.utcnow,
         nullable=False,
     )
+
+
+class UserProfile(Base):
+    """
+    Profil de l'utilisateur (une seule ligne en pratique — l'app est
+    mono-utilisateur) : le texte extrait de son CV importé (.pdf/.docx),
+    réutilisé pour générer des CV/lettres de motivation adaptés à chaque
+    candidature.
+    """
+
+    __tablename__ = "user_profile"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    cv_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    uploaded_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )

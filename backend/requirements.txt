@@ -8,10 +8,19 @@ pydantic>=2.0,<3.0
 python-dotenv>=1.0,<2.0
 requests>=2.31,<3.0
 
-# Lecture des emails Outlook Desktop via COM (Windows uniquement, pas
-# besoin sous Linux/Mac si tu n'utilises que Yahoo/Gmail en IMAP).
-pywin32>=306; sys_platform == "win32"
+# Lecture du CV importé (.pdf / .docx) et génération des CV/lettres de
+# motivation en PDF.
+pypdf>=4.0,<6.0
+python-docx>=1.1,<2.0
+reportlab>=4.1,<5.0
+python-multipart>=0.0.9,<1.0
 
-# Non utilisé par défaut (ancien flux OAuth Microsoft Graph, conservé au
-# cas où tu voudrais y revenir un jour) :
-# msal>=1.28,<2.0
+# Techniquement requis même si inutilisé par défaut : email_sync.py
+# importe graph_auth.py de façon inconditionnelle (plomberie Microsoft
+# Graph, conservée au cas où — voir README-backend.md), qui importe msal.
+msal>=1.28,<2.0
+
+# Requis uniquement sous Windows si tu veux réactiver la lecture d'un
+# compte Outlook via COM/Outlook Desktop (non utilisé par défaut,
+# ACCOUNTS passe entièrement par IMAP actuellement).
+# pywin32>=306; sys_platform == "win32"

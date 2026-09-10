@@ -10,9 +10,8 @@ Centraliser les candidatures, suivre les échanges avec les recruteurs et analys
 - Suivre l'historique des échanges avec les entreprises et recruteurs
 - Détecter automatiquement les emails liés à une candidature (confirmation, entretien, réponse positive/négative), en extraire l'entreprise, le poste et la localisation, et mettre à jour le suivi en conséquence
 - Repérer les candidatures à relancer (aucune activité depuis un certain temps) ou incomplètes (infos manquantes)
-- Garder l'utilisateur en contrôle : les emails sont importés en lecture seule, aucun envoi automatique n'est effectué, et toute détection automatique reste éditable/complétable à la main
-
-Non encore implémenté (objectifs futurs) : préparation de CV adaptés et de lettres de motivation.
+- Générer des CV et lettres de motivation adaptés à chaque candidature, et des messages de candidature spontanée, à partir d'un CV importé une fois — sans jamais inventer d'expérience ou de compétence absente du CV d'origine
+- Garder l'utilisateur en contrôle : les emails sont importés en lecture seule, aucun envoi automatique n'est effectué, et toute détection/génération automatique reste éditable/complétable à la main
 
 ## Statut
 
@@ -36,21 +35,26 @@ jobtracker-ai/
 ├── backend/
 │   ├── main.py                  # Point d'entrée FastAPI
 │   ├── database.py               # Config SQLAlchemy / SQLite + migrations légères
-│   ├── models.py                 # Application, InteractionHistory, ProcessedEmail, SyncState, ExtractionCorrection
+│   ├── models.py                 # Application, InteractionHistory, ProcessedEmail, SyncState, ExtractionCorrection, UserProfile
 │   ├── schemas.py                 # Schémas Pydantic
 │   ├── graph_auth.py              # (inutilisé actuellement) plomberie Microsoft Graph, conservée au cas où
 │   ├── authorize_outlook.py       # (inutilisé actuellement) idem
 │   ├── routes/
-│   │   ├── applications.py        # CRUD, doublons/fusion, stats de réponse
+│   │   ├── applications.py        # CRUD, doublons/fusion, stats de réponse, export CSV, snooze
 │   │   ├── history.py             # Historique des interactions par candidature
 │   │   ├── emails.py              # Synchronisation, journal des emails, création rapide/en lot de fiches, correction d'extraction
-│   │   └── reminders.py           # Candidatures à relancer / infos manquantes
+│   │   ├── reminders.py           # Candidatures à relancer / infos manquantes
+│   │   ├── profile.py              # Import/consultation/édition du CV
+│   │   └── documents.py            # Génération CV/lettres adaptés + candidature spontanée
 │   └── services/
 │       ├── email_sync.py          # Sync IMAP, classification, extraction, matching, commit incrémental
 │       ├── ai_classifier.py       # Appel à Ollama pour classifier un email
 │       ├── corrections.py         # Mémorisation des corrections d'extraction + exemples pour l'IA
 │       ├── stats.py                # Délais/taux de réponse par candidature
-│       └── reminders.py           # Calcul des candidatures à relancer / infos manquantes
+│       ├── reminders.py            # Calcul des candidatures à relancer / infos manquantes
+│       ├── cv_extraction.py        # Extraction de texte depuis un CV .pdf/.docx
+│       ├── document_generator.py   # Génération de CV/lettres/candidatures spontanées via l'IA
+│       └── pdf_generator.py        # Mise en page PDF des documents générés
 └── frontend/
     └── app/
         ├── page.tsx                        # Accueil : liste, création, synchro emails, filtre de statut
@@ -59,7 +63,9 @@ jobtracker-ai/
         ├── reminders/page.tsx              # Candidatures à relancer / infos manquantes
         ├── duplicates/page.tsx             # Détection et fusion de candidatures en double
         ├── kanban/page.tsx                  # Vue kanban (glisser-déposer par statut)
-        └── stats/page.tsx                  # Statistiques (graphiques, taux de réponse, délais)
+        ├── stats/page.tsx                  # Statistiques (graphiques, taux de réponse, délais)
+        ├── profile/page.tsx                 # Import/consultation/édition du CV
+        └── spontaneous/page.tsx             # Candidature spontanée (suggestions + génération de lettre)
 ```
 
 ## Installation
@@ -172,6 +178,16 @@ détection de l'entreprise fonctionne normalement sur les emails transférés.
 6. Tous les emails traités sont journalisés (`ProcessedEmail`) et consultables sur la page `/emails` — recherche texte, filtres (compte, type d'événement, rattachement, dates), pagination, sélection multiple pour créer plusieurs fiches d'un coup. Depuis un email non rattaché à une fiche (ignoré ou non), un bouton permet de créer rapidement une candidature à partir de cet email (avec une nouvelle tentative d'extraction via l'IA si elle est disponible à ce moment-là).
 7. Si l'entreprise, le poste ou la localisation détectés sont faux, ils peuvent être corrigés directement depuis le journal (bouton "✏️ Corriger"). Ces corrections sont mémorisées et réinjectées comme exemples dans le prompt de l'IA lors des synchros suivantes, pour l'aider à éviter la même erreur sur des emails similaires (pas de ré-entraînement — de l'apprentissage en contexte).
 
+## CV, lettres de motivation et candidature spontanée
+
+1. Sur la page **Mon profil** (`/profile`), importe ton CV (`.pdf` ou `.docx`) — le texte est extrait automatiquement et reste modifiable directement dans l'appli (utile si l'extraction n'est pas parfaite, par exemple sur un CV très mis en forme).
+2. Depuis une fiche candidature, deux boutons génèrent un **PDF téléchargeable** à partir de ce CV : "📄 Lettre de motivation" et "📋 CV adapté" (contenu réorganisé/mis en avant pour le poste visé — rien n'est inventé, l'IA doit s'en tenir au contenu réel du CV).
+3. Sur la page **Candidature spontanée** (`/spontaneous`) :
+   - suggestions d'entreprises à cibler selon un secteur (et éventuellement une zone géographique) ;
+   - génération d'un message de candidature spontanée pour une entreprise donnée.
+
+⚠️ L'IA locale (Ollama) n'a pas accès à internet : les suggestions d'entreprises viennent uniquement de ses connaissances d'entraînement, potentiellement datées ou incomplètes — à vérifier avant tout contact. Tous les documents générés sont des brouillons à relire avant envoi.
+
 ## API — endpoints principaux
 
 | Méthode | Route | Description |
@@ -191,13 +207,19 @@ détection de l'entreprise fonctionne normalement sur les emails transférés.
 | POST | `/emails/bulk-create-applications` | Idem, pour plusieurs emails sélectionnés d'un coup |
 | POST | `/emails/{id}/correct` | Corriger l'entreprise/le poste/la localisation détectés (alimente l'IA pour les prochaines synchros) |
 | GET | `/reminders` | Candidatures à relancer + infos manquantes (param : `stale_days`, défaut 7) |
+| GET/POST/PUT/DELETE | `/profile/cv` | Consulter / importer / corriger / supprimer le CV |
+| POST | `/applications/{id}/generate-cover-letter` | Générer une lettre de motivation adaptée (PDF) |
+| POST | `/applications/{id}/generate-cv` | Générer un CV adapté (PDF) |
+| POST | `/spontaneous/suggestions` | Suggérer des entreprises à cibler (candidature spontanée) |
+| POST | `/spontaneous/generate-letter` | Générer un message de candidature spontanée (PDF) |
 | GET | `/health` | Statut de l'API |
 
 ## Roadmap
 
 - [x] Génération de `requirements.txt` / `pyproject.toml`
 - [x] Variable d'environnement pour l'URL de l'API côté frontend
-- [ ] Préparation de CV adaptés et de lettres de motivation
+- [x] Préparation de CV adaptés et de lettres de motivation (à partir d'un CV importé, en PDF)
+- [x] Recherche/génération de candidature spontanée (suggestions d'entreprises + message généré)
 - [x] Rappels / relances (détection des candidatures sans réponse et des infos manquantes)
 - [x] Détection automatique de la localisation du poste dans les emails
 - [x] Journal des emails : recherche, filtres avancés, pagination, création rapide de fiche depuis un email

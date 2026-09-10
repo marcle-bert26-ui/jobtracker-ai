@@ -453,6 +453,20 @@ export default function Home() {
             </a>
 
             <Link
+              href="/profile"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+            >
+              👤 Mon profil
+            </Link>
+
+            <Link
+              href="/spontaneous"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+            >
+              🎯 Spontanée
+            </Link>
+
+            <Link
               href="/reminders"
               className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
             >

@@ -195,3 +195,31 @@ class AccountSyncResult(BaseModel):
 
 class SyncResult(BaseModel):
     results: list[AccountSyncResult]
+
+
+class ProfileResponse(BaseModel):
+    has_cv: bool
+    filename: str | None = None
+    cv_text: str | None = None
+    uploaded_at: datetime | None = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    cv_text: str
+
+
+class GenerationRequest(BaseModel):
+    # Instructions libres optionnelles (ex : "mets en avant mon expérience
+    # en gestion de projet", "reste très synthétique").
+    extra_instructions: str | None = None
+
+
+class SuggestionsRequest(BaseModel):
+    sector: str
+    location: str | None = None
+
+
+class SpontaneousLetterRequest(BaseModel):
+    company: str
+    context: str | None = None
+    extra_instructions: str | None = None

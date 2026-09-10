@@ -31,16 +31,21 @@ backend/
 ├── graph_auth.py               # (inutilisé actuellement) plomberie Microsoft Graph (OAuth device flow), conservée au cas où un compte Graph serait reconnecté un jour
 ├── authorize_outlook.py        # (inutilisé actuellement) idem
 ├── routes/
-│   ├── applications.py         # CRUD candidatures, doublons/fusion, statistiques de réponse
+│   ├── applications.py         # CRUD candidatures, doublons/fusion, statistiques de réponse, export CSV, snooze
 │   ├── history.py              # Historique des interactions
 │   ├── emails.py               # Sync, journal des emails (recherche/filtres/pagination), création rapide/en lot de fiches, correction d'extraction
-│   └── reminders.py            # Candidatures à relancer / infos manquantes
+│   ├── reminders.py            # Candidatures à relancer / infos manquantes
+│   ├── profile.py               # Import/consultation/édition du CV
+│   └── documents.py             # Génération CV/lettres adaptés + candidature spontanée
 └── services/
     ├── email_sync.py            # Cœur de la sync : IMAP (Outlook/Yahoo/Gmail), classification, extraction, rapprochement
     ├── ai_classifier.py         # Appel à Ollama pour classifier un email (repli sur mots-clés géré dans email_sync.py)
     ├── corrections.py           # Mémorisation des corrections utilisateur + exemples réinjectés dans le prompt IA
     ├── stats.py                  # Dates de première réponse/entretien par candidature (délais, taux de réponse)
-    └── reminders.py             # Calcul des candidatures à relancer / infos manquantes
+    ├── reminders.py             # Calcul des candidatures à relancer / infos manquantes
+    ├── cv_extraction.py          # Extraction de texte depuis un CV .pdf/.docx (pypdf / python-docx)
+    ├── document_generator.py     # Génération de CV/lettres/candidatures spontanées via Ollama
+    └── pdf_generator.py          # Mise en page PDF des documents générés (reportlab)
 ```
 
 ## Modèles de données (`models.py`)
@@ -50,6 +55,7 @@ backend/
 - **`ProcessedEmail`** — trace de chaque email déjà traité par la sync (déduplication via `message_id`), avec l'entreprise/poste/localisation extraits, un lien optionnel vers une `Application`, et un lien pour rouvrir l'email dans la boîte mail. Rien n'est jamais purgé : tout reste consultable via `/emails/log`.
 - **`SyncState`** — dernière date de synchronisation par compte, pour ne relire que les nouveaux emails à chaque appel.
 - **`ExtractionCorrection`** — corrections apportées à la main (entreprise/poste/localisation) sur ce que la détection avait trouvé pour un email. Sert d'exemples réinjectés dans le prompt IA pour améliorer les extractions suivantes (voir `services/corrections.py`).
+- **`UserProfile`** — une seule ligne en pratique (app mono-utilisateur) : le texte extrait du CV importé, réutilisé pour générer des CV/lettres adaptés.
 
 ## Authentification des comptes email
 
@@ -86,6 +92,20 @@ L'extraction (mots-clés comme IA) n'est pas parfaite — en particulier sur des
 2. Elle est mémorisée dans `ExtractionCorrection`.
 3. Les corrections les plus récentes (`services/corrections.py`, 6 par défaut) sont réinjectées comme exemples concrets dans le prompt système envoyé à Ollama à chaque appel de `classify_with_ai` — pas de ré-entraînement, juste de l'apprentissage en contexte, qui aide l'IA à généraliser le raisonnement ("préférer l'entreprise mentionnée dans le texte à celle de la plateforme") plutôt qu'à mémoriser un cas précis.
 
+## CV, lettres de motivation et candidature spontanée
+
+`services/cv_extraction.py` lit le texte d'un CV `.pdf` (`pypdf`) ou `.docx` (`python-docx`, y compris le contenu des tableaux — souvent utilisés pour la mise en page d'un CV) et le stocke dans `UserProfile` via `routes/profile.py`. Le texte reste éditable directement (utile si l'extraction automatique n'est pas parfaite).
+
+`services/document_generator.py` appelle Ollama (même mécanisme que `ai_classifier.py`) pour :
+- rédiger une **lettre de motivation** adaptée à une candidature (texte simple) ;
+- adapter un **CV** au poste visé — réponse structurée en JSON (nom, accroche, résumé, sections avec items/puces), pour permettre une mise en page propre ;
+- suggérer des **entreprises à cibler** en candidature spontanée à partir d'un secteur ;
+- rédiger un message de **candidature spontanée** pour une entreprise donnée.
+
+Consigne stricte dans tous les prompts : ne jamais inventer d'expérience, de compétence ou de diplôme absent du CV fourni. Pour les suggestions d'entreprises, avertissement explicite qu'Ollama n'a pas accès à internet — les résultats viennent uniquement de ses connaissances d'entraînement (potentiellement datées ou partiellement inventées), à vérifier avant tout contact.
+
+`services/pdf_generator.py` met en page le texte/JSON généré en PDF via `reportlab` (aucune dépendance système requise, contrairement à des alternatives comme weasyprint — fonctionne à l'identique sous Windows/Mac/Linux avec un simple `pip install`).
+
 ## Endpoints
 
 | Méthode | Route | Description |
@@ -106,6 +126,11 @@ L'extraction (mots-clés comme IA) n'est pas parfaite — en particulier sur des
 | POST | `/emails/bulk-create-applications` | Idem, pour plusieurs emails sélectionnés d'un coup (`email_ids: [...]`) |
 | POST | `/emails/{id}/correct` | Corriger l'entreprise/le poste/la localisation détectés (alimente l'IA pour les prochaines synchros) |
 | GET | `/reminders` | Candidatures à relancer + infos manquantes (param : `stale_days`, défaut 7) |
+| GET/POST/PUT/DELETE | `/profile/cv` | Consulter / importer (`.pdf`/`.docx`) / corriger le texte / supprimer le CV |
+| POST | `/applications/{id}/generate-cover-letter` | Lettre de motivation adaptée (PDF) |
+| POST | `/applications/{id}/generate-cv` | CV adapté (PDF) |
+| POST | `/spontaneous/suggestions` | Suggérer des entreprises à cibler (`{sector, location?}`) |
+| POST | `/spontaneous/generate-letter` | Message de candidature spontanée (PDF) (`{company, context?, extra_instructions?}`) |
 
 ## Points d'attention
 
