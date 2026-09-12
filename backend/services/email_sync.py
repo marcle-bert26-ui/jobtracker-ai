@@ -13,6 +13,11 @@ from graph_auth import get_access_token
 from models import Application, InteractionHistory, ProcessedEmail, SyncState
 from services.ai_classifier import classify_with_ai, is_available as ai_is_available
 from services.corrections import get_recent_correction_examples
+from services.matching import (
+    find_confident_match,
+    normalize_company,
+    normalize_position,
+)
 
 # --------------------------------------------------------------------------
 # CONFIGURATION DES COMPTES
@@ -415,19 +420,42 @@ def _should_upgrade_status(current_status, new_status):
     )
 
 
-def find_matching_application(db, company):
-    if not company or company == "Entreprise inconnue":
+def find_matching_application(db, company, position=None, location=None):
+    """
+    Cherche une candidature déjà existante (< 90 jours) pour la même
+    entreprise à laquelle rattacher un nouvel événement email (nouvelle
+    candidature, relance, entretien, réponse...).
+
+    Le nom d'entreprise est comparé normalisé (formes juridiques et casse
+    ignorées, ex: "Orange SAS" == "orange"), et — surtout — on ne renvoie
+    une candidature que si le poste et la ville ne se contredisent pas
+    (identiques une fois normalisés, ou non renseignés d'un côté ou de
+    l'autre). Dès qu'il y a un doute (poste/ville seulement proches, ou
+    différents), on ne rattache/écrase JAMAIS la fiche existante : mieux
+    vaut créer une nouvelle fiche (visible ensuite comme doublon potentiel
+    sur la page "Doublons", à vérifier/fusionner à la main) que de mélanger
+    deux candidatures différentes pour la même entreprise.
+    """
+    company_norm = normalize_company(company)
+
+    if not company_norm:
         return None
 
     ninety_days_ago = datetime.utcnow() - timedelta(days=90)
 
-    return (
+    candidates = (
         db.query(Application)
-        .filter(Application.company.ilike(f"%{company}%"))
         .filter(Application.created_at >= ninety_days_ago)
         .order_by(Application.created_at.desc())
-        .first()
+        .all()
     )
+
+    same_company = [
+        candidate for candidate in candidates
+        if normalize_company(candidate.company) == company_norm
+    ]
+
+    return find_confident_match(same_company, company, position, location)
 
 
 VALID_EVENT_TYPES = {
@@ -608,7 +636,7 @@ def _process_message(db, account_key, message_id, subject, sender_email,
         db.add(processed_entry)
         return
 
-    application = find_matching_application(db, company)
+    application = find_matching_application(db, company, position_hint, location)
 
     full_text = f"{subject}\n{body}"
 
@@ -650,10 +678,14 @@ def _process_message(db, account_key, message_id, subject, sender_email,
     else:
         if new_status and _should_upgrade_status(application.status, new_status):
             application.status = new_status
-        # On ne complète que si la fiche n'a pas déjà une localisation —
-        # on ne veut jamais écraser une valeur saisie ou détectée avant.
+        # On ne complète que si la fiche n'a pas déjà une localisation ou
+        # un poste connu — on ne veut jamais écraser une valeur saisie ou
+        # détectée avant (find_matching_application garantit déjà qu'il
+        # n'y a pas de contradiction avec ce qui est déjà renseigné).
         if location and not application.location:
             application.location = location
+        if position_hint and not normalize_position(application.position):
+            application.position = position_hint
         result["updated_applications"] += 1
 
     db.add(

@@ -1,6 +1,5 @@
 import csv
 import io
-import re
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -19,6 +18,12 @@ from schemas import (
     ResponseMetricsResponse,
     SnoozeRequest,
 )
+from services.matching import (
+    field_relation,
+    normalize_company,
+    normalize_location,
+    normalize_position,
+)
 from services.stats import compute_response_metrics
 
 router = APIRouter(
@@ -34,24 +39,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-# Mots à ignorer pour comparer deux noms d'entreprise (formes juridiques,
-# trop fréquentes pour être discriminantes).
-_COMPANY_NOISE_WORDS = {
-    "sarl", "sas", "sasu", "sa", "eurl", "sci", "group", "groupe",
-    "inc", "ltd", "llc", "corp", "corporation", "company", "co",
-}
-
-
-def _normalize_company(company: str | None) -> str:
-    if not company:
-        return ""
-
-    normalized = re.sub(r"[^\w\s]", " ", company.strip().lower())
-    words = [w for w in normalized.split() if w and w not in _COMPANY_NOISE_WORDS]
-
-    return " ".join(words)
 
 
 @router.get(
@@ -74,32 +61,116 @@ def get_response_metrics(db: Session = Depends(get_db)):
 )
 def get_duplicate_applications(db: Session = Depends(get_db)):
     """
-    Regroupe les candidatures par nom d'entreprise normalisé (formes
-    juridiques et casse ignorées) et ne renvoie que les groupes d'au moins
-    deux candidatures — de possibles doublons à vérifier/fusionner à la
-    main. On ne fusionne jamais automatiquement : deux candidatures pour
-    la même entreprise peuvent tout à fait être légitimes (deux postes
-    différents), donc l'utilisateur reste seul juge.
+    Regroupe les candidatures qui se ressemblent : même entreprise, même
+    poste et même ville une fois normalisés (formes juridiques, casse et
+    accents ignorés). Deux candidatures ne sont un doublon "exact" que si
+    ces trois éléments concordent strictement (ou ne sont pas renseignés
+    d'un côté ou de l'autre). Dès que le poste et/ou la ville ne sont que
+    proches (fautes de frappe, intitulés voisins...) sans être identiques,
+    le groupe est marqué "probable" : il apparaît quand même ici pour
+    vérification, mais n'est JAMAIS fusionné automatiquement — la
+    sélection à fusionner n'est pas pré-cochée côté interface, c'est à
+    l'utilisateur de trancher à la main.
     """
     applications = (
         db.query(Application).order_by(Application.created_at.asc()).all()
     )
 
-    groups: dict[str, list[Application]] = {}
+    normalized = [
+        (
+            normalize_company(application.company),
+            normalize_position(application.position),
+            normalize_location(application.location),
+        )
+        for application in applications
+    ]
 
-    for application in applications:
-        key = _normalize_company(application.company)
+    n = len(applications)
+    parent = list(range(n))
 
-        if not key or key == "entreprise inconnue":
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        root_i, root_j = find(i), find(j)
+        if root_i != root_j:
+            parent[root_i] = root_j
+
+    # Pour chaque paire jugée compatible, on retient si elle est "exacte"
+    # (poste et ville identiques ou inconnus des deux côtés) ou seulement
+    # "probable" (au moins un champ proche mais pas identique).
+    pair_is_exact: dict[tuple[int, int], bool] = {}
+
+    for i in range(n):
+        company_i, position_i, location_i = normalized[i]
+
+        if not company_i:
             continue
 
-        groups.setdefault(key, []).append(application)
+        for j in range(i + 1, n):
+            company_j, position_j, location_j = normalized[j]
 
-    duplicate_groups = [
-        DuplicateGroup(key=key, applications=apps)
-        for key, apps in groups.items()
-        if len(apps) > 1
-    ]
+            if not company_j:
+                continue
+
+            company_relation = field_relation(company_i, company_j)
+
+            # Des entreprises clairement différentes ne sont jamais des
+            # doublons, quels que soient le poste et la ville.
+            if company_relation not in ("exact", "close"):
+                continue
+
+            position_relation = field_relation(position_i, position_j)
+
+            if position_relation == "different":
+                continue
+
+            location_relation = field_relation(location_i, location_j)
+
+            if location_relation == "different":
+                continue
+
+            union(i, j)
+
+            pair_is_exact[(i, j)] = (
+                company_relation == "exact"
+                and position_relation in ("exact", "unknown")
+                and location_relation in ("exact", "unknown")
+            )
+
+    clusters: dict[int, list[int]] = {}
+    for index in range(n):
+        clusters.setdefault(find(index), []).append(index)
+
+    duplicate_groups: list[DuplicateGroup] = []
+
+    for indices in clusters.values():
+        if len(indices) < 2:
+            continue
+
+        # Le groupe n'est "exacte" que si TOUTES les paires qui le
+        # composent le sont — sinon (y compris une paire jamais comparée
+        # directement, reliée seulement via un tiers) on reste prudent et
+        # on marque le groupe "probable".
+        is_exact_group = True
+        for a in indices:
+            for b in indices:
+                if a < b and not pair_is_exact.get((a, b), False):
+                    is_exact_group = False
+
+        apps = [applications[i] for i in indices]
+        key = normalize_company(apps[0].company) or f"groupe-{indices[0]}"
+
+        duplicate_groups.append(
+            DuplicateGroup(
+                key=key,
+                match_type="exacte" if is_exact_group else "probable",
+                applications=apps,
+            )
+        )
 
     duplicate_groups.sort(key=lambda group: group.applications[0].created_at)
 

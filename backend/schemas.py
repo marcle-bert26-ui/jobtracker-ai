@@ -127,6 +127,12 @@ class ResponseMetricsResponse(BaseModel):
 
 class DuplicateGroup(BaseModel):
     key: str
+    # "exacte" : même entreprise, même poste et même ville (une fois
+    #   normalisés) pour toutes les candidatures du groupe.
+    # "probable" : au moins un champ (poste et/ou ville) n'est que proche
+    #   (pas strictement identique) ou non renseigné d'un côté — à
+    #   vérifier à la main avant de fusionner, jamais fusionné tout seul.
+    match_type: str = "probable"
     applications: list[ApplicationResponse]
 
 

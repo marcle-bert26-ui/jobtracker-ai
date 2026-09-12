@@ -200,7 +200,10 @@ def _create_application_from_processed_email(
         if not position:
             position = extract_position(subject)
 
-    existing_application = find_matching_application(db, company) if company else None
+    existing_application = (
+        find_matching_application(db, company, position, location)
+        if company else None
+    )
 
     if existing_application is not None:
         db.add(

@@ -17,6 +17,7 @@ type Application = {
 
 type DuplicateGroup = {
   key: string;
+  match_type: "exacte" | "probable";
   applications: Application[];
 };
 
@@ -79,14 +80,22 @@ export default function DuplicatesPage() {
       const data: DuplicatesResponse = await response.json();
       setGroups(data.groups);
 
-      // Sélection par défaut : garder la plus ancienne (souvent la
-      // première créée, donc la plus complète/relue), fusionner le reste.
+      // Sélection par défaut : uniquement pour les groupes "exacte"
+      // (même entreprise, même poste, même ville — aucun doute), on
+      // pré-coche la fusion de tout sauf la plus ancienne fiche gardée.
+      // Pour les groupes "probable" (une ressemblance seulement, pas une
+      // identité stricte), on ne présélectionne rien : c'est à
+      // l'utilisateur de vérifier et de cocher lui-même ce qu'il veut
+      // fusionner — jamais fusionné automatiquement en cas de doute.
       const defaultSelections: Record<string, GroupSelection> = {};
       for (const group of data.groups) {
         const [first, ...rest] = group.applications;
         defaultSelections[group.key] = {
           keepId: first.id,
-          mergeIds: new Set(rest.map((application) => application.id)),
+          mergeIds:
+            group.match_type === "exacte"
+              ? new Set(rest.map((application) => application.id))
+              : new Set(),
         };
       }
       setSelections(defaultSelections);
@@ -200,12 +209,12 @@ export default function DuplicatesPage() {
               🧹 Doublons de candidatures
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              Candidatures groupées par nom d&apos;entreprise similaire.
-              Deux fiches pour la même entreprise ne sont pas forcément un
-              doublon (ça peut être deux postes différents) — vérifie
-              avant de fusionner : la fusion déplace tout l&apos;historique
+              Candidatures groupées par entreprise, poste et ville
+              similaires. Une candidature n&apos;est jamais fusionnée
+              automatiquement : la fusion déplace tout l&apos;historique
               et les emails rattachés vers la fiche conservée, puis
-              supprime les autres définitivement.
+              supprime les autres définitivement — c&apos;est toujours
+              toi qui décides et valides ici.
             </p>
           </div>
 
@@ -245,6 +254,15 @@ export default function DuplicatesPage() {
                 >
                   <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
                     {group.applications[0].company}
+                    {group.match_type === "exacte" ? (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold normal-case tracking-normal text-red-800">
+                        Correspondance exacte
+                      </span>
+                    ) : (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold normal-case tracking-normal text-amber-800">
+                        À vérifier — ressemblance seulement
+                      </span>
+                    )}
                   </p>
 
                   <div className="space-y-2">
