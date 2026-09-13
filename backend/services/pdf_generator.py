@@ -7,6 +7,7 @@ Windows/Mac/Linux avec juste `pip install`.
 
 import io
 
+from reportlab.lib.enums import TA_JUSTIFY
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
@@ -27,6 +28,7 @@ _BODY_STYLE = ParagraphStyle(
     fontSize=10.5,
     leading=15,
     spaceAfter=10,
+    alignment=TA_JUSTIFY,
 )
 
 _TITLE_STYLE = ParagraphStyle(

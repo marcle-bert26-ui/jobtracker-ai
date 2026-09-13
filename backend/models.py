@@ -314,3 +314,48 @@ class UserProfile(Base):
         DateTime,
         nullable=True,
     )
+
+
+class GeneratedDocument(Base):
+    """
+    Document généré par l'IA (lettre de motivation, CV adapté, ou message
+    de candidature spontanée) — sauvegardé pour pouvoir le rouvrir tel
+    quel plus tard sans repasser par l'IA (et donc sans risquer d'obtenir
+    un texte différent à chaque fois). Une nouvelle génération n'écrase
+    l'existant que si elle est explicitement demandée (regénération).
+    """
+
+    __tablename__ = "generated_documents"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    # "cover_letter", "cv" ou "spontaneous_letter"
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    # Renseigné pour une lettre/CV liés à une candidature du suivi ;
+    # laissé vide pour une candidature spontanée (identifiée par le nom
+    # d'entreprise saisi, pas de fiche candidature associée).
+    application_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("applications.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+
+    company: Mapped[str] = mapped_column(String(150), nullable=False)
+    position: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    # Texte brut pour une lettre ; JSON sérialisé (voir generate_tailored_cv)
+    # pour un CV structuré.
+    text_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cv_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )

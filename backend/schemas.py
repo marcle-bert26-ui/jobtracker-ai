@@ -218,6 +218,11 @@ class GenerationRequest(BaseModel):
     # Instructions libres optionnelles (ex : "mets en avant mon expérience
     # en gestion de projet", "reste très synthétique").
     extra_instructions: str | None = None
+    # Par défaut, si un document a déjà été généré pour cette candidature,
+    # on le rouvre tel quel plutôt que d'en générer un nouveau (l'IA peut
+    # produire un texte différent à chaque appel). Passe à True pour forcer
+    # une nouvelle génération qui remplace l'ancienne.
+    regenerate: bool = False
 
 
 class SuggestionsRequest(BaseModel):
@@ -229,3 +234,20 @@ class SpontaneousLetterRequest(BaseModel):
     company: str
     context: str | None = None
     extra_instructions: str | None = None
+    # Comme pour GenerationRequest : rouvre la lettre déjà générée pour
+    # cette entreprise par défaut, sauf si regenerate=True.
+    regenerate: bool = False
+
+
+class GeneratedDocumentInfo(BaseModel):
+    exists: bool
+    created_at: datetime | None = None
+
+
+class SpontaneousLetterSummary(BaseModel):
+    id: int
+    company: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

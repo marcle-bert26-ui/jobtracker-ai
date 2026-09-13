@@ -215,6 +215,8 @@ export default function ApplicationDetailPage({
   const [generatingLetter, setGeneratingLetter] = useState(false);
   const [generatingCv, setGeneratingCv] = useState(false);
   const [generationError, setGenerationError] = useState("");
+  const [letterExists, setLetterExists] = useState(false);
+  const [cvExists, setCvExists] = useState(false);
 
   // --- Historique ---
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -276,11 +278,25 @@ export default function ApplicationDetailPage({
     }
   }
 
+  function slugify(text: string) {
+    return (
+      text
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "document"
+    );
+  }
+
   async function generateDocument(
-    kind: "generate-cover-letter" | "generate-cv"
+    kind: "generate-cover-letter" | "generate-cv",
+    regenerate = false
   ) {
     const setLoadingState =
       kind === "generate-cover-letter" ? setGeneratingLetter : setGeneratingCv;
+    const setExists =
+      kind === "generate-cover-letter" ? setLetterExists : setCvExists;
 
     try {
       setLoadingState(true);
@@ -291,7 +307,7 @@ export default function ApplicationDetailPage({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ regenerate }),
         }
       );
 
@@ -315,12 +331,16 @@ export default function ApplicationDetailPage({
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
+      const companySlug = application ? slugify(application.company) : "document";
       link.download =
-        kind === "generate-cover-letter" ? "lettre-motivation.pdf" : "cv.pdf";
+        kind === "generate-cover-letter"
+          ? `lettre-motivation-${companySlug}.pdf`
+          : `cv-${companySlug}.pdf`;
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
+      setExists(true);
     } catch (err) {
       setGenerationError(
         err instanceof Error ? err.message : "Une erreur est survenue."
@@ -362,7 +382,31 @@ export default function ApplicationDetailPage({
   useEffect(() => {
     loadApplication();
     loadHistory();
+    loadDocumentStatus();
   }, [id]);
+
+  // Vérifie si une lettre/un CV ont déjà été générés pour cette
+  // candidature, pour proposer "Ouvrir" plutôt que de tout régénérer.
+  async function loadDocumentStatus() {
+    try {
+      const [letterRes, cvRes] = await Promise.all([
+        fetch(`${API_URL}/applications/${id}/generate-cover-letter`),
+        fetch(`${API_URL}/applications/${id}/generate-cv`),
+      ]);
+
+      if (letterRes.ok) {
+        const data: { exists: boolean } = await letterRes.json();
+        setLetterExists(data.exists);
+      }
+      if (cvRes.ok) {
+        const data: { exists: boolean } = await cvRes.json();
+        setCvExists(data.exists);
+      }
+    } catch {
+      // Non bloquant : si ça échoue, les boutons restent en mode
+      // "Générer" par défaut, ce qui reste une action valide.
+    }
+  }
 
   // Arrivée depuis "Créer une fiche" dans le journal des emails
   // (`?edit=1`) : on ouvre directement le mode édition pour que la
@@ -652,23 +696,69 @@ export default function ApplicationDetailPage({
 
           {!isEditing && (
             <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => void generateDocument("generate-cover-letter")}
-                disabled={generatingLetter}
-                className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {generatingLetter ? "Génération..." : "📄 Lettre de motivation"}
-              </button>
+              <div className="inline-flex overflow-hidden rounded-lg border border-slate-300 bg-white shadow-sm">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void generateDocument("generate-cover-letter", !letterExists)
+                  }
+                  disabled={generatingLetter}
+                  className="inline-flex items-center px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={
+                    letterExists
+                      ? "Rouvre la lettre déjà générée (même texte)"
+                      : "Génère une nouvelle lettre de motivation"
+                  }
+                >
+                  {generatingLetter
+                    ? "Génération..."
+                    : letterExists
+                    ? "📄 Ouvrir la lettre"
+                    : "📄 Lettre de motivation"}
+                </button>
+                {letterExists && (
+                  <button
+                    type="button"
+                    onClick={() => void generateDocument("generate-cover-letter", true)}
+                    disabled={generatingLetter}
+                    title="Générer une nouvelle version (remplace l'actuelle)"
+                    className="border-l border-slate-200 px-2 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    ↻
+                  </button>
+                )}
+              </div>
 
-              <button
-                type="button"
-                onClick={() => void generateDocument("generate-cv")}
-                disabled={generatingCv}
-                className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {generatingCv ? "Génération..." : "📋 CV adapté"}
-              </button>
+              <div className="inline-flex overflow-hidden rounded-lg border border-slate-300 bg-white shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => void generateDocument("generate-cv", !cvExists)}
+                  disabled={generatingCv}
+                  className="inline-flex items-center px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={
+                    cvExists
+                      ? "Rouvre le CV déjà généré (même contenu)"
+                      : "Génère un nouveau CV adapté"
+                  }
+                >
+                  {generatingCv
+                    ? "Génération..."
+                    : cvExists
+                    ? "📋 Ouvrir le CV"
+                    : "📋 CV adapté"}
+                </button>
+                {cvExists && (
+                  <button
+                    type="button"
+                    onClick={() => void generateDocument("generate-cv", true)}
+                    disabled={generatingCv}
+                    title="Générer une nouvelle version (remplace l'actuelle)"
+                    className="border-l border-slate-200 px-2 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    ↻
+                  </button>
+                )}
+              </div>
 
               <button
                 type="button"

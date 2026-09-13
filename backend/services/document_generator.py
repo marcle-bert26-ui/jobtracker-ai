@@ -28,9 +28,48 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 # classification d'email — on laisse largement plus de temps à Ollama.
 GENERATION_TIMEOUT = 120
 
+# Une lettre de motivation ou de candidature spontanée doit tenir sur une
+# page : au-delà, ça n'est plus lu. On le demande explicitement au modèle
+# ET on applique un garde-fou technique si jamais il dépasse quand même.
+MAX_LETTER_WORDS = 380
+
 
 class GenerationError(Exception):
     """Levée quand Ollama est indisponible ou renvoie une réponse invalide."""
+
+
+def _enforce_max_length(text: str, max_words: int = MAX_LETTER_WORDS) -> str:
+    """
+    Garde-fou appliqué après la génération : si le modèle n'a pas respecté
+    la consigne de longueur, on coupe proprement au paragraphe le plus
+    proche de la limite plutôt qu'en plein milieu d'une phrase — tout en
+    gardant systématiquement le dernier paragraphe (formule de politesse),
+    pour ne jamais renvoyer une lettre qui s'arrête brutalement.
+    """
+    words = text.split()
+
+    if len(words) <= max_words:
+        return text.strip()
+
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+
+    if len(paragraphs) <= 1:
+        return " ".join(words[:max_words]).strip() + "…"
+
+    closing = paragraphs[-1]
+    kept: list[str] = []
+    word_count = len(closing.split())
+
+    for paragraph in paragraphs[:-1]:
+        paragraph_words = len(paragraph.split())
+        if word_count + paragraph_words > max_words:
+            break
+        kept.append(paragraph)
+        word_count += paragraph_words
+
+    kept.append(closing)
+
+    return "\n\n".join(kept)
 
 
 def _chat(system_prompt: str, user_content: str, expect_json: bool = False):
@@ -91,7 +130,9 @@ def generate_cover_letter(
         "Structure : formule d'accroche, 2-3 paragraphes reliant le profil "
         "au poste visé, formule de politesse. Vouvoiement. Ne mets ni "
         "coordonnées ni date en en-tête (juste le corps de la lettre) — "
-        "elles seront ajoutées séparément. Réponds uniquement avec le texte "
+        "elles seront ajoutées séparément. IMPORTANT : la lettre doit tenir "
+        f"sur une seule page, {MAX_LETTER_WORDS} mots maximum au total — "
+        "sois concis, va à l'essentiel. Réponds uniquement avec le texte "
         "de la lettre, sans commentaire ni balise Markdown."
     )
 
@@ -102,7 +143,7 @@ def generate_cover_letter(
         + f"\nCV :\n{cv_text[:6000]}"
     )
 
-    return _chat(system_prompt, user_content)
+    return _enforce_max_length(_chat(system_prompt, user_content))
 
 
 def generate_tailored_cv(
@@ -186,7 +227,9 @@ def generate_spontaneous_letter(
         "Structure : accroche expliquant l'intérêt pour l'entreprise, lien "
         "entre le profil et ce qu'elle pourrait apporter, ouverture "
         "(disponibilité pour échanger). Vouvoiement, ton direct sans être "
-        "familier. Réponds uniquement avec le texte, sans commentaire ni "
+        "familier. IMPORTANT : le message doit tenir sur une seule page, "
+        f"{MAX_LETTER_WORDS} mots maximum au total — sois concis, va à "
+        "l'essentiel. Réponds uniquement avec le texte, sans commentaire ni "
         "balise Markdown."
     )
 
@@ -197,4 +240,4 @@ def generate_spontaneous_letter(
         + f"\nCV :\n{cv_text[:6000]}"
     )
 
-    return _chat(system_prompt, user_content)
+    return _enforce_max_length(_chat(system_prompt, user_content))
