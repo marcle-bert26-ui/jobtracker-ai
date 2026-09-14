@@ -146,6 +146,67 @@ def generate_cover_letter(
     return _enforce_max_length(_chat(system_prompt, user_content))
 
 
+def normalize_cv_data(raw: object) -> dict:
+    """
+    L'IA renvoie un JSON censé suivre un schéma précis, mais rien ne
+    garantit qu'elle s'y tienne à la lettre (ex : "bullets" renvoyé comme
+    une simple chaîne au lieu d'une liste, une section qui n'est pas un
+    objet...). Sans ce nettoyage, une déviation mineure du modèle fait
+    planter la mise en page PDF (`pdf_generator.generate_cv_pdf`) au lieu
+    de simplement dégrader un peu le rendu. On force donc une forme
+    toujours exploitable, quoi que le modèle ait réellement renvoyé.
+    """
+    if not isinstance(raw, dict):
+        raw = {}
+
+    def _as_str(value) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return str(value).strip() or None
+
+    def _as_bullets(value) -> list[str]:
+        if isinstance(value, list):
+            return [b.strip() for b in (_as_str(item) for item in value) if b]
+        text = _as_str(value)
+        return [text] if text else []
+
+    sections = []
+    raw_sections = raw.get("sections")
+
+    if isinstance(raw_sections, list):
+        for raw_section in raw_sections:
+            if not isinstance(raw_section, dict):
+                continue
+
+            title = _as_str(raw_section.get("title"))
+            raw_items = raw_section.get("items")
+            items = []
+
+            if isinstance(raw_items, list):
+                for raw_item in raw_items:
+                    if not isinstance(raw_item, dict):
+                        continue
+
+                    heading = _as_str(raw_item.get("heading"))
+                    bullets = _as_bullets(raw_item.get("bullets"))
+
+                    if heading or bullets:
+                        items.append({"heading": heading, "bullets": bullets})
+
+            if title and items:
+                sections.append({"title": title, "items": items})
+
+    return {
+        "full_name": _as_str(raw.get("full_name")),
+        "headline": _as_str(raw.get("headline")),
+        "summary": _as_str(raw.get("summary")),
+        "sections": sections,
+    }
+
+
 def generate_tailored_cv(
     cv_text: str, company: str, position: str, extra_instructions: str | None = None
 ) -> dict:
@@ -187,7 +248,20 @@ def generate_tailored_cv(
         + f"\nCV d'origine :\n{cv_text[:6000]}"
     )
 
-    return _chat(system_prompt, user_content, expect_json=True)
+    raw = _chat(system_prompt, user_content, expect_json=True)
+    cv_data = normalize_cv_data(raw)
+
+    if not cv_data["sections"] and not cv_data["summary"]:
+        # Le JSON était syntaxiquement valide mais vide de tout contenu
+        # exploitable une fois nettoyé — plutôt que de renvoyer un CV
+        # quasi blanc, on le signale comme un échec de génération pour
+        # que l'appelant puisse le faire savoir plutôt que de produire un
+        # PDF inutile.
+        raise GenerationError(
+            "L'IA a renvoyé un CV vide ou dans un format inattendu — réessaie."
+        )
+
+    return cv_data
 
 
 def suggest_target_companies(cv_text: str, sector: str, location: str | None = None) -> list[dict]:

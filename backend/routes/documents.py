@@ -18,6 +18,7 @@ from services.document_generator import (
     generate_cover_letter,
     generate_spontaneous_letter,
     generate_tailored_cv,
+    normalize_cv_data,
     suggest_target_companies,
 )
 from services.matching import find_confident_match, normalize_company
@@ -53,6 +54,17 @@ def _get_cv_text(db: Session) -> str:
         )
 
     return profile.cv_text
+
+
+def _get_cv_text_or_none(db: Session) -> str | None:
+    """
+    Comme `_get_cv_text`, mais sans lever d'erreur si aucun CV n'est
+    importé — pour les endpoints où générer la lettre automatiquement est
+    un bonus, pas une condition pour créer la fiche (ex : ajout manuel
+    d'une entreprise en candidature spontanée).
+    """
+    profile = db.query(UserProfile).first()
+    return profile.cv_text if profile and profile.cv_text else None
 
 
 def _get_application(db: Session, application_id: int) -> Application:
@@ -94,7 +106,8 @@ def _get_existing_document(
 
 
 def _find_or_create_spontaneous_application(
-    db: Session, company: str, context: str | None = None
+    db: Session, company: str, context: str | None = None,
+    cv_text: str | None = None,
 ) -> tuple[Application, bool]:
     """
     Renvoie la fiche candidature pour cette entreprise, en la créant si
@@ -104,6 +117,13 @@ def _find_or_create_spontaneous_application(
     pour la logique de comparaison (aucun poste/ville précis ici, donc
     toute candidature existante pour la même entreprise est considérée
     comme "la même").
+
+    Si `cv_text` est fourni et qu'une nouvelle fiche est créée, la lettre
+    de motivation est générée dans la foulée et sauvegardée — pour
+    qu'elle soit déjà prête à l'ouverture de la fiche, sans étape
+    supplémentaire. Un échec de génération (IA indisponible...) n'empêche
+    jamais la création de la fiche : la lettre reste alors générable à la
+    main depuis la fiche, comme d'habitude.
     """
     company = (company or "").strip()
 
@@ -130,6 +150,27 @@ def _find_or_create_spontaneous_application(
     db.add(application)
     db.commit()
     db.refresh(application)
+
+    if cv_text:
+        try:
+            letter_text = generate_spontaneous_letter(
+                cv_text, application.company, application.notes
+            )
+        except GenerationError:
+            # Pas grave : la fiche existe déjà, la lettre reste générable
+            # à la main depuis la fiche si cette tentative auto échoue.
+            pass
+        else:
+            db.add(
+                GeneratedDocument(
+                    kind="cover_letter",
+                    application_id=application.id,
+                    company=application.company,
+                    position=application.position,
+                    text_content=letter_text,
+                )
+            )
+            db.commit()
 
     return application, True
 
@@ -254,8 +295,18 @@ def generate_application_cv(
 
     document = _get_existing_document(db, "cv", application_id)
 
+    reusable_cv_data = None
+
     if document is not None and not payload.regenerate:
-        cv_data = json.loads(document.cv_data)
+        try:
+            reusable_cv_data = normalize_cv_data(json.loads(document.cv_data))
+        except (TypeError, ValueError):
+            # Document existant illisible (ancien format corrompu) —
+            # on régénère plutôt que de planter.
+            reusable_cv_data = None
+
+    if reusable_cv_data is not None:
+        cv_data = reusable_cv_data
     else:
         cv_text = _get_cv_text(db)
 
@@ -287,7 +338,16 @@ def generate_application_cv(
 
         db.commit()
 
-    pdf_bytes = generate_cv_pdf(cv_data)
+    try:
+        pdf_bytes = generate_cv_pdf(cv_data)
+    except Exception as exc:  # noqa: BLE001 - dernier filet avant un 500 brut
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Le CV généré n'a pas pu être mis en page en PDF. "
+                "Réessaie avec regenerate=true."
+            ),
+        ) from exc
 
     filename = f"cv-{_slugify(application.company)}.pdf"
 
@@ -331,7 +391,7 @@ def get_spontaneous_suggestions(
 
         why = entry.get("why")
         application, created = _find_or_create_spontaneous_application(
-            db, name, why
+            db, name, why, cv_text
         )
         results.append(
             {
@@ -353,7 +413,7 @@ def add_spontaneous_company(
     """Crée (ou réutilise) une fiche candidature spontanée pour une
     entreprise choisie manuellement."""
     application, created = _find_or_create_spontaneous_application(
-        db, payload.company, payload.context
+        db, payload.company, payload.context, _get_cv_text_or_none(db)
     )
     return {
         "name": application.company,
@@ -371,6 +431,7 @@ def add_spontaneous_companies_bulk(
     entreprise d'une liste collée en une fois — une ligne indépendante par
     entreprise, les échecs individuels n'empêchent pas de traiter le reste."""
     results = []
+    cv_text = _get_cv_text_or_none(db)
 
     for raw_name in payload.companies:
         name = (raw_name or "").strip()
@@ -380,7 +441,7 @@ def add_spontaneous_companies_bulk(
 
         try:
             application, created = _find_or_create_spontaneous_application(
-                db, name, payload.context
+                db, name, payload.context, cv_text
             )
             results.append(
                 {
