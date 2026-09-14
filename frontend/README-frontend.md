@@ -1,36 +1,355 @@
 # JobTracker AI — Frontend
 
-Interface Next.js 16 / React 19 de l'application JobTracker AI. Voir le [README principal](../README.md) pour la vue d'ensemble du projet et l'installation du backend.
+Interface web de l'application JobTracker AI.
 
-## Lancer en développement
+Le frontend permet de consulter et gérer les candidatures et les différentes fonctionnalités de l'application.
 
-```bash
+---
+
+## Technologies
+
+* Next.js
+* React
+* TypeScript
+* CSS
+* npm
+
+---
+
+## Structure
+
+```text
+frontend/
+│
+├── app/
+│   ├── applications/
+│   ├── components/
+│   ├── duplicates/
+│   ├── emails/
+│   ├── kanban/
+│   ├── profile/
+│   ├── reminders/
+│   ├── spontaneous/
+│   ├── stats/
+│   └── page.tsx
+│
+├── lib/
+│   └── api.ts
+│
+├── package.json
+└── ...
+```
+
+---
+
+## Installation
+
+Installer les dépendances :
+
+```powershell
 npm install
+```
+
+---
+
+## Lancement
+
+Depuis le dossier `frontend` :
+
+```powershell
 npm run dev
 ```
 
-Ouvre [http://localhost:3000](http://localhost:3000). Le backend (`http://127.0.0.1:8000`) doit tourner en parallèle — voir le README principal.
+Le frontend est disponible localement sur :
 
-## Pages
+```text
+http://localhost:3000
+```
 
-| Route | Fichier | Contenu |
-|---|---|---|
-| `/` | `app/page.tsx` | Liste des candidatures (filtre de statut persisté dans l'URL), création, déclenchement de la synchro emails |
-| `/applications/[id]` | `app/applications/[id]/page.tsx` | Détail, édition et historique d'une candidature (`?edit=1` ouvre directement en mode édition) |
-| `/emails` | `app/emails/page.tsx` | Journal des emails : recherche, filtres (compte, type, rattachement, dates), pagination, création rapide/en lot de fiche(s), correction des extractions erronées |
-| `/reminders` | `app/reminders/page.tsx` | Candidatures à relancer (seuil configurable, report/snooze possible) et candidatures avec infos manquantes |
-| `/duplicates` | `app/duplicates/page.tsx` | Détection de candidatures potentiellement en double (groupées par entreprise) et fusion |
-| `/kanban` | `app/kanban/page.tsx` | Vue kanban : une colonne par statut, glisser-déposer une carte pour changer le statut de la candidature |
-| `/stats` | `app/stats/page.tsx` | Statistiques et graphiques sur les candidatures, dont taux de réponse/entretien et délais moyens |
-| `/profile` | `app/profile/page.tsx` | Import (`.pdf`/`.docx`) et édition du CV, base de toutes les générations de documents |
-| `/spontaneous` | `app/spontaneous/page.tsx` | Candidature spontanée : suggestions d'entreprises + génération d'un message adapté |
+---
 
-## Notes techniques
+## Connexion au backend
 
-- L'URL de l'API backend vient de `process.env.NEXT_PUBLIC_API_URL`, avec repli sur `http://127.0.0.1:8000` si la variable n'est pas définie — voir `frontend/.env.local` dans le README principal pour la configurer.
-- Style : Tailwind CSS v4.
-- **Filtres persistés dans l'URL** : sur `/`, `/emails` et `/reminders`, l'état des filtres (recherche, statut, plage de dates...) est répercuté dans les paramètres de requête de l'URL plutôt que gardé uniquement en mémoire. Ça permet au bouton "← Retour" (`router.back()`) sur la fiche candidature de restaurer exactement la page et les filtres actifs avant le clic, au lieu de repartir de zéro.
-- **Kanban** (`/kanban`) : glisser-déposer implémenté avec l'API HTML5 Drag and Drop native du navigateur, sans dépendance ajoutée. Mise à jour optimiste du statut à l'écran, annulée automatiquement si la sauvegarde côté API échoue.
-- **Export CSV** : le bouton "⬇️ Exporter (CSV)" de l'accueil est un simple lien `<a>` vers `GET /applications/export` (le backend renvoie le fichier avec les en-têtes de téléchargement, pas besoin de logique côté frontend).
-- **Report ("snooze")** : sur `/reminders`, le bouton "⏰ Reporter" propose 3j/1sem/2sem/1mois ; la candidature reportée disparaît de "à relancer" jusqu'à la date choisie. Un badge sur la fiche candidature (`/applications/[id]`) indique le report en cours et permet de l'annuler.
-- **Génération de documents (CV, lettres)** : les boutons de génération font un `fetch` POST vers le backend, récupèrent la réponse en `blob()`, puis déclenchent le téléchargement via un lien `<a download>` créé dynamiquement (`URL.createObjectURL`) — nécessaire ici car le fichier vient d'une requête POST (pas un simple lien direct comme pour l'export CSV en GET).
+La configuration de l'API est centralisée dans :
+
+```text
+lib/api.ts
+```
+
+Le frontend détecte automatiquement l'environnement dans lequel il est ouvert.
+
+### Mode local
+
+Lorsque le frontend est ouvert sur :
+
+```text
+http://localhost:3000
+```
+
+il utilise :
+
+```text
+http://127.0.0.1:8000
+```
+
+Architecture :
+
+```text
+Navigateur
+    │
+    ▼
+localhost:3000
+    │
+    ▼
+127.0.0.1:8000
+```
+
+---
+
+### Mode Dev Tunnel
+
+Lorsque le frontend est ouvert via :
+
+```text
+https://426bxhwg-3000.uks1.devtunnels.ms
+```
+
+il détecte automatiquement le suffixe :
+
+```text
+-3000
+```
+
+et construit l'URL du backend :
+
+```text
+https://426bxhwg-8000.uks1.devtunnels.ms
+```
+
+Architecture :
+
+```text
+Navigateur distant
+        │
+        ▼
+Dev Tunnel :3000
+        │
+        ▼
+Frontend Next.js
+        │
+        ▼
+Dev Tunnel :8000
+        │
+        ▼
+Backend FastAPI
+```
+
+---
+
+## Configuration API
+
+Le fichier :
+
+```text
+lib/api.ts
+```
+
+centralise l'accès au backend.
+
+Exemple de logique :
+
+```text
+localhost / 127.0.0.1
+        ↓
+http://127.0.0.1:8000
+
+xxxx-3000.uks1.devtunnels.ms
+        ↓
+xxxx-8000.uks1.devtunnels.ms
+```
+
+Cette architecture évite d'avoir une URL d'API différente dans chaque page.
+
+---
+
+## Pages principales
+
+L'application contient notamment les fonctionnalités suivantes :
+
+```text
+/
+├── Tableau de bord
+├── Candidatures
+├── Kanban
+├── Emails
+├── Relances
+├── Statistiques
+├── Candidatures spontanées
+├── Doublons
+├── Profil
+└── Documents
+```
+
+---
+
+## Backend Status
+
+Le composant :
+
+```text
+app/components/BackendStatus.tsx
+```
+
+permet de vérifier si le backend est disponible.
+
+Il utilise l'endpoint :
+
+```text
+/health
+```
+
+Si le backend est indisponible, l'application peut utiliser le protocole Windows :
+
+```text
+jobtracker://start
+```
+
+pour demander son redémarrage.
+
+---
+
+## Dev Tunnel
+
+Le frontend est exposé sur le port :
+
+```text
+3000
+```
+
+Tunnel :
+
+```text
+jobtracker-ai.uks1
+```
+
+URL publique actuelle :
+
+```text
+https://426bxhwg-3000.uks1.devtunnels.ms
+```
+
+Lancement du tunnel depuis Windows :
+
+```powershell
+C:\Users\marcl\devtunnel.exe host jobtracker-ai
+```
+
+Le tunnel doit exposer simultanément les ports :
+
+```text
+3000
+8000
+```
+
+---
+
+## Développement
+
+Lancer le frontend :
+
+```powershell
+npm run dev
+```
+
+Puis ouvrir :
+
+```text
+http://localhost:3000
+```
+
+Les modifications du code sont automatiquement prises en compte par Next.js en mode développement.
+
+---
+
+## Vérification de la connexion API
+
+Vérifier d'abord le backend :
+
+```text
+http://127.0.0.1:8000/health
+```
+
+Puis ouvrir le frontend :
+
+```text
+http://localhost:3000
+```
+
+Pour tester l'accès distant :
+
+```text
+https://426bxhwg-3000.uks1.devtunnels.ms
+```
+
+---
+
+## Problèmes fréquents
+
+### Erreur CORS
+
+Vérifier que l'URL du frontend est présente dans :
+
+```text
+backend/main.py
+```
+
+Exemple :
+
+```python
+"https://426bxhwg-3000.uks1.devtunnels.ms"
+```
+
+---
+
+### Le frontend affiche une erreur réseau
+
+Vérifier :
+
+1. que le backend est démarré ;
+2. que le port `8000` est accessible ;
+3. que le Dev Tunnel est actif ;
+4. que `lib/api.ts` contient la bonne configuration.
+
+---
+
+### Le tunnel ne fonctionne pas
+
+Vérifier que Dev Tunnel est connecté :
+
+```powershell
+C:\Users\marcl\devtunnel.exe list
+```
+
+Puis relancer :
+
+```powershell
+C:\Users\marcl\devtunnel.exe host jobtracker-ai
+```
+
+---
+
+## Build de production
+
+Pour générer une version de production :
+
+```powershell
+npm run build
+```
+
+Puis :
+
+```powershell
+npm start
+```
+
+> Le fonctionnement actuel du projet est principalement prévu pour le développement et l'utilisation personnelle avec `npm run dev`.
