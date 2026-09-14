@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, use, useEffect, useRef, useState } from "react";
+import API_URL from "../../../lib/api";
 
 type Application = {
   id: number;
@@ -50,8 +51,6 @@ type HistoryForm = {
   date: string;
   note: string;
 };
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const HISTORY_TYPES = [
   "Candidature envoyée",

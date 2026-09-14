@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import KanbanBoard from "./components/KanbanBoard";
+import API_URL from "../lib/api";
 
 type Application = {
   id: number;
@@ -45,8 +46,6 @@ type SyncAccountResult = {
   ignored: number;
   error: string | null;
 };
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const ACCOUNT_LABELS: Record<string, string> = {
   outlook: "Outlook (perso)",

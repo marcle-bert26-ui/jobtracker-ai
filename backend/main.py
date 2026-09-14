@@ -35,30 +35,24 @@ app = FastAPI(
 # CORS
 # ============================================================
 
-FRONTEND_URL = os.getenv(
-    "FRONTEND_URL",
+
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
     "https://bfljc775-3000.uks1.devtunnels.ms",
-)
-print("FRONTEND_URL =", FRONTEND_URL)
+]
+
+print("CORS - origines autorisées :")
+for origin in ALLOWED_ORIGINS:
+    print("  -", origin)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        # Utilisation locale
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-
-        # Microsoft Dev Tunnel
-        "https://bfljc775-3000.uks1.devtunnels.ms",
-
-        # Valeur provenant du .env si elle existe
-        FRONTEND_URL,
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ============================================================
 # Routes

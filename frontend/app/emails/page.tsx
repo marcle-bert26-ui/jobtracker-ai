@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import API_URL from "../../lib/api";
 
 type ProcessedEmail = {
   id: number;
@@ -52,7 +53,6 @@ type BulkCreateResponse = {
   results: BulkCreateItemResult[];
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const PAGE_SIZE = 30;
 
