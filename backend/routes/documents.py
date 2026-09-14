@@ -9,8 +9,8 @@ from models import Application, GeneratedDocument, UserProfile
 from schemas import (
     GeneratedDocumentInfo,
     GenerationRequest,
-    SpontaneousLetterRequest,
-    SpontaneousLetterSummary,
+    SpontaneousBulkCompaniesRequest,
+    SpontaneousCompanyRequest,
     SuggestionsRequest,
 )
 from services.document_generator import (
@@ -20,10 +20,15 @@ from services.document_generator import (
     generate_tailored_cv,
     suggest_target_companies,
 )
-from services.matching import normalize_company
+from services.matching import find_confident_match, normalize_company
 from services.pdf_generator import generate_cv_pdf, generate_letter_pdf
 
 router = APIRouter(tags=["Documents"])
+
+# Valeur du champ "source" utilisée pour repérer une candidature créée
+# depuis la page Candidature spontanée (déjà présente comme option dans
+# les formulaires existants) — sert à adapter la génération de lettre.
+SPONTANEOUS_SOURCE = "Candidature spontanée"
 
 
 def get_db():
@@ -88,6 +93,47 @@ def _get_existing_document(
     )
 
 
+def _find_or_create_spontaneous_application(
+    db: Session, company: str, context: str | None = None
+) -> tuple[Application, bool]:
+    """
+    Renvoie la fiche candidature pour cette entreprise, en la créant si
+    elle n'existe pas encore. Si une candidature (spontanée ou non) existe
+    déjà pour cette entreprise, elle est réutilisée telle quelle plutôt
+    que d'en créer une nouvelle en double — voir services/matching.py
+    pour la logique de comparaison (aucun poste/ville précis ici, donc
+    toute candidature existante pour la même entreprise est considérée
+    comme "la même").
+    """
+    company = (company or "").strip()
+
+    if not company:
+        raise HTTPException(status_code=400, detail="Nom d'entreprise vide.")
+
+    company_norm = normalize_company(company)
+    candidates = [
+        app for app in db.query(Application).all()
+        if normalize_company(app.company) == company_norm
+    ]
+    existing = find_confident_match(candidates, company, None, None)
+
+    if existing is not None:
+        return existing, False
+
+    application = Application(
+        company=company,
+        position="Poste non précisé",
+        source=SPONTANEOUS_SOURCE,
+        notes=(context or "").strip() or None,
+        status="Candidature envoyée",
+    )
+    db.add(application)
+    db.commit()
+    db.refresh(application)
+
+    return application, True
+
+
 @router.get(
     "/applications/{application_id}/generate-cover-letter",
     response_model=GeneratedDocumentInfo,
@@ -133,6 +179,7 @@ def generate_application_cover_letter(
     mais peut se tromper sur la formulation ou l'accroche.
     """
     application = _get_application(db, application_id)
+    is_spontaneous = application.source == SPONTANEOUS_SOURCE
 
     document = _get_existing_document(db, "cover_letter", application_id)
 
@@ -142,12 +189,24 @@ def generate_application_cover_letter(
         cv_text = _get_cv_text(db)
 
         try:
-            letter_text = generate_cover_letter(
-                cv_text,
-                application.company,
-                application.position,
-                payload.extra_instructions,
-            )
+            if is_spontaneous:
+                # Pas de poste précis à viser : on utilise le générateur
+                # dédié aux candidatures spontanées plutôt que de faire
+                # écrire à l'IA une lettre "pour le poste de Poste non
+                # précisé", qui n'aurait aucun sens.
+                letter_text = generate_spontaneous_letter(
+                    cv_text,
+                    application.company,
+                    application.notes,
+                    payload.extra_instructions,
+                )
+            else:
+                letter_text = generate_cover_letter(
+                    cv_text,
+                    application.company,
+                    application.position,
+                    payload.extra_instructions,
+                )
         except GenerationError as exc:
             raise HTTPException(status_code=503, detail=str(exc))
 
@@ -167,11 +226,15 @@ def generate_application_cover_letter(
 
         db.commit()
 
-    pdf_bytes = generate_letter_pdf(
-        letter_text, f"Lettre de motivation — {application.company}"
+    title = (
+        f"Candidature spontanée — {application.company}"
+        if is_spontaneous
+        else f"Lettre de motivation — {application.company}"
     )
+    pdf_bytes = generate_letter_pdf(letter_text, title)
 
-    filename = f"lettre-motivation-{_slugify(application.company)}.pdf"
+    prefix = "candidature-spontanee" if is_spontaneous else "lettre-motivation"
+    filename = f"{prefix}-{_slugify(application.company)}.pdf"
 
     return _pdf_response(pdf_bytes, filename)
 
@@ -238,12 +301,14 @@ def get_spontaneous_suggestions(
 ):
     """
     Suggère des entreprises à cibler pour une candidature spontanée, à
-    partir du profil et d'un secteur indiqué.
+    partir du profil et d'un secteur indiqué, et crée directement une
+    fiche candidature pour chacune (réutilisée si elle existe déjà).
 
-    ATTENTION : l'IA locale n'a pas accès à internet — ces suggestions
+    ATTENTION : l'IA locale n'a pas accès à internet — ces noms
     viennent uniquement de ses connaissances d'entraînement (potentiellement
     datées, incomplètes, voire partiellement inventées). Vérifie toujours
-    qu'une entreprise proposée existe bien et recrute avant de la contacter.
+    qu'une entreprise proposée existe bien et recrute avant de la contacter
+    (un lien de recherche est fourni côté frontend pour chacune).
     """
     cv_text = _get_cv_text(db)
 
@@ -257,107 +322,82 @@ def get_spontaneous_suggestions(
     except GenerationError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
-    return {"companies": companies}
+    results = []
+    for entry in companies:
+        name = (entry.get("name") or "").strip()
 
+        if not name:
+            continue
 
-@router.get(
-    "/spontaneous/letters",
-    response_model=list[SpontaneousLetterSummary],
-)
-def list_spontaneous_letters(db: Session = Depends(get_db)):
-    """Liste les lettres de candidature spontanée déjà générées, pour
-    pouvoir en rouvrir une plutôt que d'en régénérer une nouvelle."""
-    documents = (
-        db.query(GeneratedDocument)
-        .filter(GeneratedDocument.kind == "spontaneous_letter")
-        .order_by(GeneratedDocument.created_at.desc())
-        .all()
-    )
-    return documents
-
-
-@router.get("/spontaneous/letters/{document_id}/pdf")
-def download_spontaneous_letter(document_id: int, db: Session = Depends(get_db)):
-    """Re-télécharge en PDF une lettre de candidature spontanée déjà
-    générée, sans repasser par l'IA."""
-    document = (
-        db.query(GeneratedDocument)
-        .filter(
-            GeneratedDocument.id == document_id,
-            GeneratedDocument.kind == "spontaneous_letter",
+        why = entry.get("why")
+        application, created = _find_or_create_spontaneous_application(
+            db, name, why
         )
-        .first()
-    )
+        results.append(
+            {
+                "name": application.company,
+                "why": why,
+                "application_id": application.id,
+                "created": created,
+            }
+        )
 
-    if document is None:
-        raise HTTPException(status_code=404, detail="Lettre introuvable.")
-
-    pdf_bytes = generate_letter_pdf(
-        document.text_content, f"Candidature spontanée — {document.company}"
-    )
-    filename = f"candidature-spontanee-{_slugify(document.company)}.pdf"
-
-    return _pdf_response(pdf_bytes, filename)
+    return {"companies": results}
 
 
-@router.post("/spontaneous/generate-letter")
-def generate_spontaneous_application_letter(
-    payload: SpontaneousLetterRequest,
+@router.post("/spontaneous/add-company")
+def add_spontaneous_company(
+    payload: SpontaneousCompanyRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Génère (ou rouvre, si elle existe déjà pour cette entreprise et que
-    `regenerate` n'est pas demandé) un message de candidature spontanée,
-    et le renvoie en PDF.
-    """
-    company = payload.company.strip()
+    """Crée (ou réutilise) une fiche candidature spontanée pour une
+    entreprise choisie manuellement."""
+    application, created = _find_or_create_spontaneous_application(
+        db, payload.company, payload.context
+    )
+    return {
+        "name": application.company,
+        "application_id": application.id,
+        "created": created,
+    }
 
-    if not company:
-        raise HTTPException(status_code=400, detail="Indique le nom de l'entreprise ciblée.")
 
-    company_norm = normalize_company(company)
+@router.post("/spontaneous/add-companies-bulk")
+def add_spontaneous_companies_bulk(
+    payload: SpontaneousBulkCompaniesRequest,
+    db: Session = Depends(get_db),
+):
+    """Crée (ou réutilise) une fiche candidature spontanée pour chaque
+    entreprise d'une liste collée en une fois — une ligne indépendante par
+    entreprise, les échecs individuels n'empêchent pas de traiter le reste."""
+    results = []
 
-    document = None
-    for candidate in (
-        db.query(GeneratedDocument)
-        .filter(GeneratedDocument.kind == "spontaneous_letter")
-        .order_by(GeneratedDocument.created_at.desc())
-        .all()
-    ):
-        if normalize_company(candidate.company) == company_norm:
-            document = candidate
-            break
+    for raw_name in payload.companies:
+        name = (raw_name or "").strip()
 
-    if document is not None and not payload.regenerate:
-        letter_text = document.text_content
-    else:
-        cv_text = _get_cv_text(db)
+        if not name:
+            continue
 
         try:
-            letter_text = generate_spontaneous_letter(
-                cv_text, company, payload.context,
-                payload.extra_instructions,
+            application, created = _find_or_create_spontaneous_application(
+                db, name, payload.context
             )
-        except GenerationError as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
-
-        if document is not None:
-            document.text_content = letter_text
-            document.company = company
-        else:
-            document = GeneratedDocument(
-                kind="spontaneous_letter",
-                company=company,
-                text_content=letter_text,
+            results.append(
+                {
+                    "name": application.company,
+                    "application_id": application.id,
+                    "success": True,
+                    "error": None,
+                }
             )
-            db.add(document)
+        except HTTPException as exc:
+            results.append(
+                {
+                    "name": name,
+                    "application_id": None,
+                    "success": False,
+                    "error": str(exc.detail),
+                }
+            )
 
-        db.commit()
-
-    pdf_bytes = generate_letter_pdf(
-        letter_text, f"Candidature spontanée — {company}"
-    )
-
-    filename = f"candidature-spontanee-{_slugify(company)}.pdf"
-
-    return _pdf_response(pdf_bytes, filename)
+    return {"results": results}

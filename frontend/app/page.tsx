@@ -436,13 +436,6 @@ export default function Home() {
               🔁 Réanalyser (60j)
             </button>
 
-            <Link
-              href="/kanban"
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-            >
-              📌 Kanban
-            </Link>
-
             <a
               href={`${API_URL}/applications/export`}
               className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
@@ -450,48 +443,6 @@ export default function Home() {
             >
               ⬇️ Exporter (CSV)
             </a>
-
-            <Link
-              href="/profile"
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-            >
-              👤 Mon profil
-            </Link>
-
-            <Link
-              href="/spontaneous"
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-            >
-              🎯 Spontanée
-            </Link>
-
-            <Link
-              href="/reminders"
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-            >
-              🔔 Rappels
-            </Link>
-
-            <Link
-              href="/duplicates"
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-            >
-              🧹 Doublons
-            </Link>
-
-            <Link
-              href="/emails"
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-            >
-              📋 Journal des emails
-            </Link>
-
-            <Link
-              href="/stats"
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-            >
-              📊 Statistiques
-            </Link>
           </div>
         </header>
 

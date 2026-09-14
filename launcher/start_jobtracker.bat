@@ -38,6 +38,26 @@ if not exist "%ROOT%\frontend\node_modules" (
     exit /b 1
 )
 
+REM --- Nettoyage d'un lancement precedent mal ferme -------------------
+REM Si des fenetres "JobTracker - Backend/Frontend" trainent deja (par
+REM exemple fermees avec la petite croix sans que les processus enfants
+REM (uvicorn/node) ne s'arretent avec), on les ferme avant de relancer.
+REM Sinon : port deja utilise, fichier de log deja ouvert par l'ancien
+REM processus, etc. Voir aussi restart_backend.bat qui fait deja ca pour
+REM le backend seul.
+echo Nettoyage d'un lancement precedent eventuel...
+taskkill /FI "WINDOWTITLE eq JobTracker - Backend*" /T /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq JobTracker - Frontend*" /T /F >nul 2>&1
+
+REM Filet de securite : si un ancien processus est reste accroche a l'un
+REM des deux ports (echappe a la fermeture ci-dessus), on le ferme aussi.
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":8000" ^| findstr "LISTENING"') do (
+    taskkill /PID %%P /F >nul 2>&1
+)
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":3000" ^| findstr "LISTENING"') do (
+    taskkill /PID %%P /F >nul 2>&1
+)
+
 REM --- Demarrage du backend (FastAPI) via script dedie (evite les guillemets imbriques) ---
 echo Demarrage du backend...
 start "JobTracker - Backend" cmd /k call "%~dp0run_backend.bat" "%ROOT%\backend"

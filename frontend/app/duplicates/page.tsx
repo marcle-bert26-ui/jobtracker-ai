@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import API_URL from "../../lib/api";
 
@@ -195,12 +194,6 @@ export default function DuplicatesPage() {
   return (
     <main className="min-h-screen bg-slate-100 p-4 md:p-6">
       <div className="mx-auto max-w-4xl">
-        <Link
-          href="/"
-          className="mb-6 inline-flex items-center text-sm font-medium text-blue-700 transition hover:text-blue-900"
-        >
-          ← Retour aux candidatures
-        </Link>
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-6 py-5 md:px-8">

@@ -1,12 +1,12 @@
 ﻿**********************
 Début de la transcription Windows PowerShell
-Heure de début : 20260914101147
+Heure de début : 20260914132525
 Nom d'utilisateur : PC-MARC\marcl
 Utilisateur runAs :  PC-MARC\marcl
 Nom de la configuration : 
 Ordinateur : PC-MARC (Microsoft Windows NT 10.0.26200.0)
-Application hôte : powershell -NoLogo -Command & { Start-Transcript -Path sync_log.txt -Force | Out-Null; uvicorn main:app --reload; Stop-Transcript | Out-Null }
-ID de processus : 10612
+Application hôte : powershell -NoLogo -Command & { try { Start-Transcript -Path sync_log.txt -Force -ErrorAction Stop | Out-Null } catch { Write-Host 'Journal (sync_log.txt) deja utilise par une autre fenetre - poursuite sans journal pour cette session.' -ForegroundColor Yellow }; uvicorn main:app --reload; try { Stop-Transcript | Out-Null } catch {} }
+ID de processus : 25484
 PSVersion: 5.1.26100.9444
 PSEdition: Desktop
 PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9444

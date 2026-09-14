@@ -230,24 +230,16 @@ class SuggestionsRequest(BaseModel):
     location: str | None = None
 
 
-class SpontaneousLetterRequest(BaseModel):
+class SpontaneousCompanyRequest(BaseModel):
     company: str
     context: str | None = None
-    extra_instructions: str | None = None
-    # Comme pour GenerationRequest : rouvre la lettre déjà générée pour
-    # cette entreprise par défaut, sauf si regenerate=True.
-    regenerate: bool = False
+
+
+class SpontaneousBulkCompaniesRequest(BaseModel):
+    companies: list[str]
+    context: str | None = None
 
 
 class GeneratedDocumentInfo(BaseModel):
     exists: bool
     created_at: datetime | None = None
-
-
-class SpontaneousLetterSummary(BaseModel):
-    id: int
-    company: str
-    created_at: datetime
-
-    class Config:
-        from_attributes = True

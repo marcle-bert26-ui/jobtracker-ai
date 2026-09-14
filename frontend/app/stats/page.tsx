@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   Bar,
@@ -313,12 +312,6 @@ export default function StatsPage() {
   return (
     <main className="min-h-screen bg-slate-100 p-4 md:p-6">
       <div className="mx-auto max-w-6xl">
-        <Link
-          href="/"
-          className="mb-6 inline-flex items-center text-sm font-medium text-blue-700 transition hover:text-blue-900"
-        >
-          ← Retour aux candidatures
-        </Link>
 
         <header className="mb-6 flex flex-col gap-4 rounded-2xl border border-slate-300 bg-white px-6 py-5 shadow-sm md:flex-row md:items-center md:justify-between">
           <div>

@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+import API_URL from "../../lib/api";
 
 type Application = {
   id: number;
@@ -58,7 +57,7 @@ export default function KanbanPage() {
       setLoading(true);
       setError("");
 
-      const response = await fetch(`${API_URL}/applications`);
+      const response = await fetch(`${API_URL}/applications/`);
 
       if (!response.ok) {
         throw new Error("Impossible de charger les candidatures.");
@@ -128,14 +127,7 @@ export default function KanbanPage() {
   return (
     <main className="min-h-screen bg-slate-100 p-4 md:p-6">
       <div className="mx-auto max-w-[1600px]">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <Link
-            href="/"
-            className="inline-flex items-center text-sm font-medium text-blue-700 transition hover:text-blue-900"
-          >
-            ← Retour aux candidatures
-          </Link>
-
+        <div className="mb-6">
           <h1 className="text-2xl font-bold text-slate-900">📌 Kanban</h1>
         </div>
 

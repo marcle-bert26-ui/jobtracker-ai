@@ -218,12 +218,6 @@ export default function SpontaneousPage() {
   return (
     <main className="min-h-screen bg-slate-100 p-4 md:p-6">
       <div className="mx-auto max-w-3xl">
-        <Link
-          href="/"
-          className="mb-6 inline-flex items-center text-sm font-medium text-blue-700 transition hover:text-blue-900"
-        >
-          ← Retour aux candidatures
-        </Link>
 
         <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
           <h1 className="text-2xl font-bold text-slate-900">
