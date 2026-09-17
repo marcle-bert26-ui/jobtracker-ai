@@ -16,9 +16,10 @@ from schemas import (
 from services.document_generator import (
     GenerationError,
     generate_cover_letter,
+    generate_cv_headline_and_summary,
     generate_spontaneous_letter,
-    generate_tailored_cv,
     normalize_cv_data,
+    structure_cv,
     suggest_target_companies,
 )
 from services.matching import find_confident_match, normalize_company
@@ -54,6 +55,47 @@ def _get_cv_text(db: Session) -> str:
         )
 
     return profile.cv_text
+
+
+def _get_profile_or_400(db: Session) -> UserProfile:
+    profile = db.query(UserProfile).first()
+
+    if profile is None or not profile.cv_text:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Aucun CV importé — va d'abord sur la page Profil pour "
+                "importer ton CV (.pdf ou .docx)."
+            ),
+        )
+
+    return profile
+
+
+def _get_cv_structure(db: Session, profile: UserProfile) -> dict:
+    """
+    Structure du CV (nom, expérience, formation, compétences...), mise en
+    cache sur le profil après la première génération — jamais recalculée
+    tant que le CV n'est pas réimporté/modifié (voir routes/profile.py,
+    qui vide le cache dans ce cas). Évite de refaire réécrire tout le CV
+    par l'IA à chaque candidature : seuls l'accroche et le résumé sont
+    régénérés à chaque fois (voir generate_application_cv).
+    """
+    if profile.cv_structure:
+        try:
+            return normalize_cv_data(json.loads(profile.cv_structure))
+        except (TypeError, ValueError):
+            pass  # cache corrompu, on retombe sur une restructuration
+
+    try:
+        structured = structure_cv(profile.cv_text)
+    except GenerationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    profile.cv_structure = json.dumps(structured, ensure_ascii=False)
+    db.commit()
+
+    return structured
 
 
 def _get_cv_text_or_none(db: Session) -> str | None:
@@ -308,17 +350,20 @@ def generate_application_cv(
     if reusable_cv_data is not None:
         cv_data = reusable_cv_data
     else:
-        cv_text = _get_cv_text(db)
+        profile = _get_profile_or_400(db)
+        structured = _get_cv_structure(db, profile)
 
         try:
-            cv_data = generate_tailored_cv(
-                cv_text,
+            headline_and_summary = generate_cv_headline_and_summary(
+                profile.cv_text,
                 application.company,
                 application.position,
                 payload.extra_instructions,
             )
         except GenerationError as exc:
             raise HTTPException(status_code=503, detail=str(exc))
+
+        cv_data = {**structured, **headline_and_summary}
 
         cv_data_json = json.dumps(cv_data, ensure_ascii=False)
 

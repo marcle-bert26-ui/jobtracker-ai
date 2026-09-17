@@ -26,7 +26,11 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
 # Générer un CV/une lettre est une tâche plus longue qu'une simple
 # classification d'email — on laisse largement plus de temps à Ollama.
-GENERATION_TIMEOUT = 120
+# Configurable via .env (OLLAMA_GENERATION_TIMEOUT, en secondes) : la
+# génération d'un CV structuré en JSON peut être sensiblement plus lente
+# qu'une lettre en texte libre selon le modèle et la machine — augmente
+# cette valeur si tu as encore le message "trop lent".
+GENERATION_TIMEOUT = int(os.getenv("OLLAMA_GENERATION_TIMEOUT", "240"))
 
 # Une lettre de motivation ou de candidature spontanée doit tenir sur une
 # page : au-delà, ça n'est plus lu. On le demande explicitement au modèle
@@ -96,7 +100,9 @@ def _chat(system_prompt: str, user_content: str, expect_json: bool = False):
     except requests.exceptions.Timeout as exc:
         raise GenerationError(
             f"Ollama a mis plus de {GENERATION_TIMEOUT}s à répondre — "
-            f"modèle '{OLLAMA_MODEL}' trop lent ou machine surchargée."
+            f"modèle '{OLLAMA_MODEL}' trop lent ou machine surchargée. "
+            "Augmente OLLAMA_GENERATION_TIMEOUT dans le .env si ça se "
+            "reproduit, ou essaie un modèle plus léger (ex : llama3.2:3b)."
         ) from exc
     except requests.exceptions.RequestException as exc:
         raise GenerationError(f"Erreur en contactant Ollama : {exc}") from exc
@@ -207,28 +213,32 @@ def normalize_cv_data(raw: object) -> dict:
     }
 
 
-def generate_tailored_cv(
-    cv_text: str, company: str, position: str, extra_instructions: str | None = None
-) -> dict:
+def structure_cv(cv_text: str) -> dict:
+    """
+    Structure le CV brut (nom, sections avec leurs items/puces) — appelée
+    une seule fois à l'import du CV (voir routes/profile.py), pas à
+    chaque génération. Consigne stricte : extraire et organiser tel quel,
+    ne jamais reformuler ni condenser le contenu (contrairement à
+    l'ancienne approche qui réécrivait tout à chaque candidature — plus
+    lent, et plus de risque que l'IA altère un détail au passage).
+    """
     system_prompt = (
-        "Tu adaptes un CV existant pour un poste précis, en français. "
-        "STRICTEMENT à partir du contenu du CV fourni : ne jamais inventer "
-        "d'expérience, de compétence, de diplôme ou de date qui n'y figure "
-        "pas. Ton travail : réorganiser et reformuler pour mettre en avant "
-        "ce qui est pertinent pour CE poste précis, condenser ce qui l'est "
-        "moins — pas créer du contenu nouveau.\n\n"
+        "Tu structures un CV existant en français, à partir de son texte "
+        "brut. STRICTEMENT à partir du contenu fourni : ne jamais "
+        "inventer d'expérience, de compétence, de diplôme ou de date qui "
+        "n'y figure pas — et ne reformule ni ne condense rien, contente-toi "
+        "d'organiser tel quel ce qui est écrit (recopie les phrases du CV, "
+        "ne les réécris pas).\n\n"
         "Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant ou "
         "après, au format exact :\n"
         "{\n"
         '  "full_name": "nom complet tel que trouvé dans le CV, ou null",\n'
-        '  "headline": "accroche courte (une ligne) adaptée au poste visé",\n'
-        '  "summary": "résumé professionnel de 2-3 phrases, adapté au poste",\n'
         '  "sections": [\n'
         "    {\n"
         '      "title": "Expérience professionnelle",\n'
         '      "items": [\n'
         '        {"heading": "Intitulé — Entreprise (dates)", '
-        '"bullets": ["réalisation 1", "réalisation 2"]}\n'
+        '"bullets": ["réalisation 1 telle qu\'écrite dans le CV", "réalisation 2"]}\n'
         "      ]\n"
         "    },\n"
         '    {"title": "Formation", "items": [{"heading": "...", "bullets": []}]},\n'
@@ -236,32 +246,66 @@ def generate_tailored_cv(
         '"bullets": ["compétence 1", "compétence 2"]}]}\n'
         "  ]\n"
         "}\n"
-        "Adapte les titres de section et leur ordre si le CV d'origine en "
-        "suggère d'autres (langues, certifications...) — n'invente pas de "
-        "sections vides."
+        "Adapte les titres de section et leur ordre à ce que le CV "
+        "d'origine contient réellement (langues, certifications...) — "
+        "n'invente pas de section vide."
+    )
+
+    raw = _chat(system_prompt, f"CV :\n{cv_text[:8000]}", expect_json=True)
+    structured = normalize_cv_data(raw)
+
+    if not structured["sections"]:
+        raise GenerationError(
+            "L'IA n'a pas réussi à structurer ce CV — réessaie, ou "
+            "vérifie que le texte importé est bien lisible."
+        )
+
+    return structured
+
+
+def generate_cv_headline_and_summary(
+    cv_text: str, company: str, position: str, extra_instructions: str | None = None
+) -> dict:
+    """
+    Génère uniquement l'accroche et le résumé professionnel, adaptés au
+    poste visé — le reste du CV (expérience, formation, compétences)
+    n'est jamais réécrit, voir `structure_cv`. Appel volontairement léger
+    (peu de texte à produire) pour rester rapide.
+    """
+    system_prompt = (
+        "À partir d'un CV et d'un poste visé, en français, rédige "
+        "uniquement : une accroche courte (une ligne) et un résumé "
+        "professionnel de 2-3 phrases, tous deux adaptés à ce poste "
+        "précis. STRICTEMENT basés sur le contenu réel du CV fourni — "
+        "n'invente aucune expérience, compétence ou diplôme qui n'y "
+        "figure pas.\n\n"
+        "Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant "
+        'ou après : {"headline": "...", "summary": "..."}'
     )
 
     user_content = (
         f"Poste visé : {position}\n"
         f"Entreprise : {company}\n"
         + (f"Consignes supplémentaires : {extra_instructions}\n" if extra_instructions else "")
-        + f"\nCV d'origine :\n{cv_text[:6000]}"
+        + f"\nCV :\n{cv_text[:6000]}"
     )
 
     raw = _chat(system_prompt, user_content, expect_json=True)
-    cv_data = normalize_cv_data(raw)
 
-    if not cv_data["sections"] and not cv_data["summary"]:
-        # Le JSON était syntaxiquement valide mais vide de tout contenu
-        # exploitable une fois nettoyé — plutôt que de renvoyer un CV
-        # quasi blanc, on le signale comme un échec de génération pour
-        # que l'appelant puisse le faire savoir plutôt que de produire un
-        # PDF inutile.
+    if not isinstance(raw, dict):
         raise GenerationError(
-            "L'IA a renvoyé un CV vide ou dans un format inattendu — réessaie."
+            "L'IA n'a pas renvoyé un résultat exploitable — réessaie."
         )
 
-    return cv_data
+    headline = (raw.get("headline") or "").strip() or None
+    summary = (raw.get("summary") or "").strip() or None
+
+    if not headline and not summary:
+        raise GenerationError(
+            "L'IA n'a renvoyé ni accroche ni résumé — réessaie."
+        )
+
+    return {"headline": headline, "summary": summary}
 
 
 def suggest_target_companies(cv_text: str, sector: str, location: str | None = None) -> list[dict]:

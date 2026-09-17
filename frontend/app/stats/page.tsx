@@ -25,7 +25,7 @@ type Application = {
   created_at: string;
 };
 
-type Granularity = "week" | "month";
+type Granularity = "day" | "week" | "month";
 
 type ResponseMetric = {
   application_id: number;
@@ -104,6 +104,16 @@ function bucketFor(dateString: string, granularity: Granularity, showYear: boole
 
   if (Number.isNaN(date.getTime())) {
     return { key: "0000-00", label: "Inconnu" };
+  }
+
+  if (granularity === "day") {
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    const label = date.toLocaleDateString("fr-FR", {
+      day: "numeric",
+      month: "short",
+      ...(showYear ? { year: "2-digit" as const } : {}),
+    });
+    return { key, label };
   }
 
   if (granularity === "week") {
@@ -269,7 +279,13 @@ export default function StatsPage() {
       buckets.get(key)!.count += 1;
     }
 
-    return Array.from(buckets.values()).sort((a, b) => a.key.localeCompare(b.key));
+    const sorted = Array.from(buckets.values()).sort((a, b) =>
+      a.key.localeCompare(b.key)
+    );
+
+    // En vue "jour", une année entière ferait jusqu'à 365 barres —
+    // illisible. On garde seulement les 60 derniers jours avec activité.
+    return granularity === "day" ? sorted.slice(-60) : sorted;
   }, [filteredApplications, granularity, selectedYear]);
 
   const statusData = useMemo(() => {
@@ -474,11 +490,27 @@ export default function StatsPage() {
                   </h2>
                   <p className="mt-1 text-sm text-slate-500">
                     Nombre de candidatures postulées,{" "}
-                    {granularity === "week" ? "par semaine" : "par mois"}.
+                    {granularity === "day"
+                      ? "par jour (60 derniers jours avec activité)"
+                      : granularity === "week"
+                      ? "par semaine"
+                      : "par mois"}
+                    .
                   </p>
                 </div>
 
                 <div className="inline-flex rounded-lg border border-slate-300 bg-slate-100 p-1 text-sm font-medium">
+                  <button
+                    type="button"
+                    onClick={() => setGranularity("day")}
+                    className={`rounded-md px-3 py-1.5 transition ${
+                      granularity === "day"
+                        ? "bg-white text-blue-700 shadow-sm"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    Jour
+                  </button>
                   <button
                     type="button"
                     onClick={() => setGranularity("week")}
@@ -511,9 +543,9 @@ export default function StatsPage() {
                     <XAxis
                       dataKey="label"
                       tick={{ fontSize: 11, fill: "#475569" }}
-                      angle={granularity === "week" ? -45 : 0}
-                      textAnchor={granularity === "week" ? "end" : "middle"}
-                      height={granularity === "week" ? 50 : 30}
+                      angle={granularity === "month" ? 0 : -45}
+                      textAnchor={granularity === "month" ? "middle" : "end"}
+                      height={granularity === "month" ? 30 : 50}
                     />
                     <YAxis
                       allowDecimals={false}

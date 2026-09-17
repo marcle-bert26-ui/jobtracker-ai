@@ -310,6 +310,13 @@ class UserProfile(Base):
 
     cv_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Structure du CV (nom, sections/expérience/formation/compétences)
+    # extraite une seule fois par l'IA à l'import — stockée en JSON pour
+    # ne jamais avoir à la régénérer (et donc jamais la faire réécrire)
+    # à chaque génération de CV adapté. Recalculée uniquement quand le
+    # texte du CV change (nouvel import ou correction manuelle).
+    cv_structure: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     uploaded_at: Mapped[datetime | None] = mapped_column(
         DateTime,
         nullable=True,

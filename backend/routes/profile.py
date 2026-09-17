@@ -82,6 +82,9 @@ async def upload_cv(
     profile = _get_or_create_profile(db)
     profile.filename = file.filename
     profile.cv_text = cv_text
+    # Le CV a changé : la structure mise en cache (voir generate_application_cv)
+    # ne correspond plus — elle sera recalculée à la prochaine génération.
+    profile.cv_structure = None
     profile.uploaded_at = datetime.utcnow()
     db.commit()
     db.refresh(profile)
@@ -111,6 +114,7 @@ def update_cv_text(
 
     profile = _get_or_create_profile(db)
     profile.cv_text = cv_text
+    profile.cv_structure = None
     profile.uploaded_at = datetime.utcnow()
     if not profile.filename:
         profile.filename = "Saisi manuellement"
@@ -132,6 +136,7 @@ def delete_cv(db: Session = Depends(get_db)):
     if profile is not None:
         profile.filename = None
         profile.cv_text = None
+        profile.cv_structure = None
         profile.uploaded_at = None
         db.commit()
 
