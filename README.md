@@ -374,5 +374,8 @@ JobTracker AI a pour objectif de fournir un outil personnel permettant de :
 
 Le projet est conçu pour fonctionner principalement sur un PC personnel avec possibilité d'accès distant via Dev Tunnel.
 
+## Representation grapique du projet
+
+Voici une représentation avec gitdiagram que je souhaitait tester.
 
 [![Architecture diagram of marcle-bert26-ui/jobtracker-ai](https://gitdiagram.com/marcle-bert26-ui/jobtracker-ai/diagram.png)](https://gitdiagram.com/marcle-bert26-ui/jobtracker-ai?utm_source=readme&utm_medium=picture)
